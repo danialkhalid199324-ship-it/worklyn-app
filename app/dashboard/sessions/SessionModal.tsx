@@ -5,13 +5,14 @@ import { useRouter } from 'next/navigation'
 import Button from '@/components/ui/Button'
 import { createSession, updateSession, deleteSession } from '@/app/actions/sessions'
 import { fetchSessionNotifications, sendSessionReminder } from '@/app/actions/notifications'
-import type { ClientRow, ServiceRow, SessionNotificationRow } from '@/types/database'
+import type { ClientRow, ServiceRow, SessionNotificationRow, SessionStatus } from '@/types/database'
 import type { SessionWithClient } from '@/lib/db'
 import NDISNotesFields, {
   type NDISNotes,
   parseNDISNotes,
   computeNotesWarnings,
 } from './NDISNotesFields'
+import CompleteSessionNotesModal, { type NewSessionData } from './CompleteSessionNotesModal'
 
 interface Props {
   clients: ClientRow[]
@@ -90,6 +91,13 @@ export default function SessionModal({ clients, services = [], session, onClose,
   const [notesWarnings, setNotesWarnings] = useState<string[]>([])
   const hasLegacyNotes = !parseNDISNotes(session?.notes ?? null) && Boolean(session?.notes?.trim())
 
+  // Controlled status — needed to intercept transition to 'completed'
+  const [selectedStatus, setSelectedStatus] = useState<SessionStatus>(session?.status ?? 'scheduled')
+
+  // Notes completion modal state
+  const [showNotesStep, setShowNotesStep] = useState(false)
+  const [pendingNewSessionData, setPendingNewSessionData] = useState<NewSessionData | null>(null)
+
   function resolveRate(svc: import('@/types/database').ServiceRow, date: string, ph: boolean): string {
     const day = date ? new Date(`${date}T12:00:00`).getDay() : -1
     let resolved: number | null
@@ -165,6 +173,28 @@ export default function SessionModal({ clients, services = [], session, onClose,
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
+    // If transitioning to completed, open the notes modal first
+    const wasAlreadyCompleted = session?.status === 'completed'
+    if (selectedStatus === 'completed' && !wasAlreadyCompleted) {
+      if (!session) {
+        // New session — capture current form fields for CompleteSessionNotesModal
+        const fd = new FormData(formRef.current!)
+        setPendingNewSessionData({
+          client_id: fd.get('client_id') as string,
+          service_id: (fd.get('service_id') as string) || null,
+          service_date: fd.get('service_date') as string,
+          start_time: (fd.get('start_time') as string) || null,
+          end_time: (fd.get('end_time') as string) || null,
+          duration_minutes: parseInt(fd.get('duration_minutes') as string) || 60,
+          ndis_line_item: (fd.get('ndis_line_item') as string)?.trim() || null,
+          rate: parseFloat(fd.get('rate') as string) || 0,
+        })
+      }
+      setShowNotesStep(true)
+      return
+    }
+
     const fd = new FormData(formRef.current!)
 
     // Warn on incomplete NDIS notes — non-blocking, submission proceeds
@@ -235,7 +265,15 @@ export default function SessionModal({ clients, services = [], session, onClose,
     serviceName: services.find((s) => s.id === selectedServiceId)?.name ?? '',
   }
 
+  const notesModalClientName = session
+    ? [session.clients?.first_name, session.clients?.last_name].filter(Boolean).join(' ')
+    : (() => {
+        const c = clients.find((cl) => cl.id === pendingNewSessionData?.client_id)
+        return c ? `${c.first_name} ${c.last_name}` : ''
+      })()
+
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl bg-white shadow-xl">
 
@@ -324,7 +362,8 @@ export default function SessionModal({ clients, services = [], session, onClose,
                 <select
                   name="status"
                   disabled={isInvoiced}
-                  defaultValue={session?.status ?? 'scheduled'}
+                  value={selectedStatus}
+                  onChange={(e) => setSelectedStatus(e.target.value as SessionStatus)}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50"
                 >
                   <option value="scheduled">Scheduled</option>
@@ -543,5 +582,25 @@ export default function SessionModal({ clients, services = [], session, onClose,
         </form>
       </div>
     </div>
+
+    {showNotesStep && (
+      <CompleteSessionNotesModal
+        session={session}
+        newSessionData={pendingNewSessionData ?? undefined}
+        clientName={notesModalClientName}
+        serviceName={services.find((s) => s.id === selectedServiceId)?.name ?? ''}
+        onSuccess={() => {
+          setShowNotesStep(false)
+          setPendingNewSessionData(null)
+          onClose()
+        }}
+        onCancel={() => {
+          setShowNotesStep(false)
+          setPendingNewSessionData(null)
+          setSelectedStatus(session?.status ?? 'scheduled')
+        }}
+      />
+    )}
+    </>
   )
 }

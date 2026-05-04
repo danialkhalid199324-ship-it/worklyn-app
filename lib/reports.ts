@@ -144,7 +144,7 @@ export async function getReportData(
       .lte('service_date', to),
     supabase
       .from('invoices')
-      .select('*, clients(first_name, last_name)')
+      .select('id, client_id, status, total_cents, paid_at, issued_at, created_at, clients(first_name, last_name)')
       .eq('practitioner_id', practitionerId),
     supabase
       .from('clients')

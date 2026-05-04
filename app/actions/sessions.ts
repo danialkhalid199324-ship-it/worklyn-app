@@ -72,6 +72,36 @@ async function checkConflict(
 }
 
 // ---------------------------------------------------------------------------
+// Notes validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates that NDIS structured notes contain all required fields with
+ * sufficient detail. Returns the first error string or null if valid.
+ */
+function validateCompletionNotes(notesRaw: string | null): string | null {
+  if (!notesRaw) return 'Session notes are required to complete this session.'
+  try {
+    const parsed = JSON.parse(notesRaw)
+    if (!parsed?.__ndis_v1) return 'Session notes are required to complete this session.'
+    const required: { key: string; label: string }[] = [
+      { key: 'participant_presentation', label: 'Participant Presentation' },
+      { key: 'supports_delivered',       label: 'Supports Delivered' },
+      { key: 'participant_response',     label: 'Participant Response' },
+      { key: 'progress_toward_goals',    label: 'Progress Toward Goals' },
+    ]
+    for (const { key, label } of required) {
+      const val = ((parsed[key] as string) ?? '').trim()
+      if (!val) return `${label} is required.`
+      if (val.length < 20) return `${label} is too short — please add more detail.`
+    }
+    return null
+  } catch {
+    return 'Invalid notes format.'
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Auto-invoice helper
 // ---------------------------------------------------------------------------
 
@@ -232,6 +262,12 @@ export async function createSession(formData: FormData) {
 
   const sessionStatus = ((formData.get('status') as string) || 'scheduled') as SessionStatus
 
+  // Block creating a completed session without valid notes
+  if (sessionStatus === 'completed') {
+    const notesError = validateCompletionNotes((formData.get('notes') as string)?.trim() || null)
+    if (notesError) return { error: notesError }
+  }
+
   const { data: newSession, error } = await supabase
     .from('sessions')
     .insert({
@@ -293,7 +329,7 @@ export async function updateSession(sessionId: string, formData: FormData) {
   // Explicit lock check — session notes and details are immutable once invoiced
   const { data: existing } = await supabase
     .from('sessions')
-    .select('invoice_id, client_id')
+    .select('invoice_id, client_id, status')
     .eq('id', sessionId)
     .eq('practitioner_id', practitioner.id)
     .single()
@@ -322,6 +358,12 @@ export async function updateSession(sessionId: string, formData: FormData) {
   }
 
   const newStatus = formData.get('status') as SessionStatus
+
+  // Block transitioning to completed without valid notes
+  if (newStatus === 'completed' && existing.status !== 'completed') {
+    const notesError = validateCompletionNotes((formData.get('notes') as string)?.trim() || null)
+    if (notesError) return { error: notesError }
+  }
 
   const { data: updated, error } = await supabase
     .from('sessions')
@@ -525,4 +567,50 @@ export async function generateInvoiceFromSessions(formData: FormData) {
   revalidatePath('/dashboard/calendar')
   revalidatePath(`/dashboard/clients/${clientId}`)
   return { success: true, invoiceId: invoice.id as string }
+}
+
+/**
+ * Atomically marks an existing session as completed, saves validated NDIS
+ * notes, and auto-creates a draft invoice.  Called by CompleteSessionNotesModal.
+ */
+export async function completeSession(sessionId: string, notesJson: string) {
+  const user = await requireAuth()
+  const practitioner = await getPractitionerByUserId(user.id)
+  const supabase = await createServerSupabaseClient()
+
+  // Validate notes server-side (defence-in-depth)
+  const notesError = validateCompletionNotes(notesJson)
+  if (notesError) return { error: notesError }
+
+  const { data: existing } = await supabase
+    .from('sessions')
+    .select('invoice_id, client_id, status')
+    .eq('id', sessionId)
+    .eq('practitioner_id', practitioner.id)
+    .single()
+  if (!existing) return { error: 'Session not found.' }
+  if (existing.invoice_id) {
+    return { error: 'This session has already been invoiced and cannot be modified.' }
+  }
+
+  const { error } = await supabase
+    .from('sessions')
+    .update({ status: 'completed' as SessionStatus, notes: notesJson })
+    .eq('id', sessionId)
+    .eq('practitioner_id', practitioner.id)
+    .is('invoice_id', null)
+
+  if (error) return { error: error.message }
+
+  try {
+    await autoCreateDraftInvoice(supabase, practitioner, sessionId)
+  } catch (err) {
+    console.error('[completeSession] auto-invoice failed:', err)
+  }
+
+  revalidatePath('/dashboard/sessions')
+  revalidatePath('/dashboard/invoices')
+  revalidatePath('/dashboard/calendar')
+  revalidatePath(`/dashboard/clients/${existing.client_id}`)
+  return { success: true as const }
 }

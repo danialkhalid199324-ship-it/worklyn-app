@@ -351,13 +351,20 @@ export type SessionWithClient = SessionRow & {
   invoices: { invoice_number: string } | null
 }
 
-export async function getSessions(practitionerId: string): Promise<SessionWithClient[]> {
+export async function getSessions(
+  practitionerId: string,
+  limit?: number,
+): Promise<SessionWithClient[]> {
   const supabase = await createServerSupabaseClient()
-  const { data, error } = await supabase
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let q: any = supabase
     .from('sessions')
     .select('*, clients(first_name, last_name), invoices(invoice_number)')
     .eq('practitioner_id', practitionerId)
     .order('service_date', { ascending: false })
+    .order('created_at', { ascending: false })
+  if (limit) q = q.limit(limit)
+  const { data, error } = await q
   if (error) throw error
   return (data ?? []) as unknown as SessionWithClient[]
 }

@@ -10,6 +10,23 @@ import type {
 } from '@/lib/reports'
 import { RevenueModal, SessionsModal, ClientsModal, InvoicesModal } from './ReportModals'
 
+function DownloadIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+    </svg>
+  )
+}
+
+const EXPORT_TYPES = [
+  { key: 'all',      label: 'All' },
+  { key: 'revenue',  label: 'Revenue' },
+  { key: 'sessions', label: 'Sessions' },
+  { key: 'clients',  label: 'Clients' },
+  { key: 'invoices', label: 'Invoices' },
+] as const
+
 // Defined inline so this file never imports a server module as a value
 const fmtAUD = (cents: number) =>
   new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(cents / 100)
@@ -161,21 +178,39 @@ export default function ReportsDashboard({
 
   return (
     <>
-      {/* Period filter */}
-      <div className="flex flex-wrap gap-1.5">
-        {PERIOD_OPTIONS.map((opt) => (
-          <button
-            key={opt.key}
-            onClick={() => router.push(`/dashboard/reports?period=${opt.key}`)}
-            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-              currentPeriod === opt.key
-                ? 'bg-brand-600 text-white shadow-sm'
-                : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+      {/* Period filter + export */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {PERIOD_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => router.push(`/dashboard/reports?period=${opt.key}`)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                currentPeriod === opt.key
+                  ? 'bg-brand-600 text-white shadow-sm'
+                  : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Export buttons */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-medium text-gray-400">Export:</span>
+          {EXPORT_TYPES.map((t) => (
+            <a
+              key={t.key}
+              href={`/api/reports/export?type=${t.key}&period=${currentPeriod}`}
+              download
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-800"
+            >
+              <DownloadIcon />
+              {t.label}
+            </a>
+          ))}
+        </div>
       </div>
 
       {/* KPI strip */}

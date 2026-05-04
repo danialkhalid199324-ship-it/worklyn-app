@@ -10,7 +10,7 @@ export default async function SessionsPage() {
   const practitioner = await getPractitionerByUserId(user.id)
 
   const [sessions, clients, services] = await Promise.all([
-    getSessions(practitioner.id),
+    getSessions(practitioner.id, 200),
     getClients(practitioner.id),
     getServices(practitioner.id),
   ])
