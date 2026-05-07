@@ -1,17 +1,21 @@
 'use client'
 
-import { useState, useTransition, useEffect } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Button from '@/components/ui/Button'
-import { createInvoice } from '@/app/actions/invoices'
+import { createInvoice, updateInvoice } from '@/app/actions/invoices'
 import { resolveInvoiceRecipient, recipientLabel } from '@/lib/invoice-routing'
-import type { ClientRow, OrgSettingsRow } from '@/types/database'
+import type { ClientRow, InvoiceItemRow, InvoiceRow, OrgSettingsRow } from '@/types/database'
+
+type InvoiceForEdit = InvoiceRow & { invoice_items: InvoiceItemRow[] }
 
 interface Props {
   clients: ClientRow[]
   nextInvoiceNumber: string
   orgSettings: OrgSettingsRow | null
   onClose: () => void
+  invoice?: InvoiceForEdit
+  editReason?: string
 }
 
 interface LineItem {
@@ -27,21 +31,41 @@ function newItem(): LineItem {
   return { id: ++lineItemIdSeq, description: '', quantity: '1', unit_price: '' }
 }
 
+function itemsFromInvoice(items: InvoiceItemRow[]): LineItem[] {
+  return items.map((i) => ({
+    id: ++lineItemIdSeq,
+    description: i.description,
+    quantity: String(i.quantity),
+    unit_price: String((i.unit_price_cents / 100).toFixed(2)),
+  }))
+}
+
 const INPUT =
   'w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400'
 
-export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, onClose }: Props) {
+export default function InvoiceModal({
+  clients,
+  nextInvoiceNumber,
+  orgSettings,
+  onClose,
+  invoice,
+  editReason,
+}: Props) {
+  const isEdit = !!invoice
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
-  const [selectedClientId, setSelectedClientId] = useState('')
-  const [lineItems, setLineItems] = useState<LineItem[]>([newItem()])
+  const [selectedClientId, setSelectedClientId] = useState(
+    invoice?.client_id ?? '',
+  )
+  const [lineItems, setLineItems] = useState<LineItem[]>(
+    invoice ? itemsFromInvoice(invoice.invoice_items) : [newItem()],
+  )
   const router = useRouter()
 
   const selectedClient = clients.find((c) => c.id === selectedClientId) ?? null
   const recipient = selectedClient ? resolveInvoiceRecipient(selectedClient) : null
   const isNdia = recipient?.recipient_type === 'ndia_claim'
 
-  // Totals
   const subtotal = lineItems.reduce((sum, item) => {
     const qty = parseFloat(item.quantity) || 0
     const price = parseFloat(item.unit_price) || 0
@@ -80,7 +104,10 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
     )
 
     startTransition(async () => {
-      const result = await createInvoice(formData)
+      const result = isEdit
+        ? await updateInvoice(invoice.id, formData, editReason)
+        : await createInvoice(formData)
+
       if (result?.error) {
         setError(result.error)
       } else {
@@ -98,7 +125,9 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
       <div className="flex w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl max-h-[92vh]">
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-6 py-4">
-          <h2 className="text-base font-semibold text-gray-900">New invoice</h2>
+          <h2 className="text-base font-semibold text-gray-900">
+            {isEdit ? 'Edit invoice' : 'New invoice'}
+          </h2>
           <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:text-gray-600">
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -108,6 +137,19 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
 
         <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden">
           <div className="overflow-y-auto px-6 py-5 space-y-5">
+
+            {/* Warn banner for sent/paid edits */}
+            {isEdit && (invoice.status === 'sent' || invoice.status === 'paid') && (
+              <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                <p className="text-sm text-amber-800">
+                  Editing a <strong>{invoice.status}</strong> invoice. Changes are audit-logged.
+                  {editReason && <span className="ml-1">Reason: <em>{editReason}</em></span>}
+                </p>
+              </div>
+            )}
 
             {/* Client + invoice number row */}
             <div className="grid grid-cols-2 gap-4">
@@ -135,7 +177,7 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
                 </label>
                 <input
                   name="invoice_number"
-                  defaultValue={nextInvoiceNumber}
+                  defaultValue={invoice?.invoice_number ?? nextInvoiceNumber}
                   required
                   className={INPUT}
                 />
@@ -172,13 +214,18 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
                 <input
                   type="date"
                   name="issued_at"
-                  defaultValue={new Date().toISOString().slice(0, 10)}
+                  defaultValue={invoice?.issued_at ?? new Date().toISOString().slice(0, 10)}
                   className={INPUT}
                 />
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">Due date</label>
-                <input type="date" name="due_at" className={INPUT} />
+                <input
+                  type="date"
+                  name="due_at"
+                  defaultValue={invoice?.due_at ?? ''}
+                  className={INPUT}
+                />
               </div>
             </div>
 
@@ -196,7 +243,6 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
               </div>
 
               <div className="rounded-xl border border-gray-200 overflow-hidden">
-                {/* Column headers */}
                 <div className="grid grid-cols-[1fr_80px_100px_32px] gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
                   <span>Description</span>
                   <span className="text-center">Qty</span>
@@ -204,7 +250,7 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
                   <span />
                 </div>
 
-                {lineItems.map((item, idx) => (
+                {lineItems.map((item) => (
                   <div
                     key={item.id}
                     className="grid grid-cols-[1fr_80px_100px_32px] gap-2 border-b border-gray-50 last:border-0 px-3 py-2 items-center"
@@ -248,7 +294,6 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
                   </div>
                 ))}
 
-                {/* Subtotal */}
                 <div className="flex justify-end border-t border-gray-100 bg-gray-50 px-4 py-2">
                   <span className="text-sm text-gray-500 mr-3">Total</span>
                   <span className="text-sm font-semibold text-gray-900">
@@ -287,6 +332,7 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
               <textarea
                 name="notes"
                 rows={2}
+                defaultValue={invoice?.notes ?? ''}
                 placeholder="Optional notes shown on the invoice…"
                 className={INPUT}
               />
@@ -299,7 +345,7 @@ export default function InvoiceModal({ clients, nextInvoiceNumber, orgSettings, 
           <div className="flex shrink-0 justify-end gap-3 border-t border-gray-100 px-6 py-4">
             <Button variant="outline" type="button" onClick={onClose}>Cancel</Button>
             <Button type="submit" loading={isPending} disabled={!selectedClientId || isNdia}>
-              {isNdia ? 'NDIA — no invoice' : 'Create invoice'}
+              {isEdit ? 'Save changes' : (isNdia ? 'NDIA — no invoice' : 'Create invoice')}
             </Button>
           </div>
         </form>

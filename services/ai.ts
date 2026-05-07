@@ -1,5 +1,61 @@
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages'
 
+// ── Therapy note generation ────────────────────────────────────────────────────
+
+export async function generateTherapyNoteText({
+  formattedNote,
+  clientName,
+  serviceName,
+}: {
+  formattedNote: string
+  clientName?: string
+  serviceName?: string
+}): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey || apiKey === 'your_anthropic_api_key') {
+    throw new Error('ANTHROPIC_API_KEY is not configured. Add your key to .env.local and restart the dev server.')
+  }
+
+  const context = [
+    clientName && `Client: ${clientName}`,
+    serviceName && `Service: ${serviceName}`,
+  ].filter(Boolean).join('\n')
+
+  const prompt = `You are a clinical documentation specialist for a therapy practice. Generate a professional session note narrative using ONLY the information provided. Do not add diagnoses, interpretations, or any detail not explicitly stated. Use professional third-person clinical language.
+
+${context ? `SESSION CONTEXT\n${context}\n\n` : ''}STRUCTURED SESSION DATA
+${formattedNote}
+
+---
+
+Write a professional clinical session note (2–4 paragraphs) that synthesises the above information. Integrate the observations, strategies used, and participant response into flowing prose. Conclude with follow-up and plan. Do not use bullet points. Do not repeat section headings. Do not invent details.`
+
+  const response = await fetch(CLAUDE_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  })
+
+  if (!response.ok) {
+    const body = await response.text()
+    if (response.status === 401) {
+      throw new Error('Invalid Anthropic API key. Check ANTHROPIC_API_KEY in .env.local and restart the dev server.')
+    }
+    throw new Error(`Claude API error ${response.status}: ${body}`)
+  }
+
+  const result = await response.json()
+  return result.content[0].text as string
+}
+
 export interface SessionNoteData {
   clientFirstName: string
   appointmentDate: string
@@ -15,7 +71,9 @@ export interface SessionNoteData {
 
 export async function generateSessionReport(data: SessionNoteData): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured')
+  if (!apiKey || apiKey === 'your_anthropic_api_key') {
+    throw new Error('ANTHROPIC_API_KEY is not configured. Add your key to .env.local and restart the dev server.')
+  }
 
   const response = await fetch(CLAUDE_API, {
     method: 'POST',
@@ -33,6 +91,9 @@ export async function generateSessionReport(data: SessionNoteData): Promise<stri
 
   if (!response.ok) {
     const body = await response.text()
+    if (response.status === 401) {
+      throw new Error('Invalid Anthropic API key. Check ANTHROPIC_API_KEY in .env.local and restart the dev server.')
+    }
     throw new Error(`Claude API error ${response.status}: ${body}`)
   }
 

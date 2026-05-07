@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Button from '@/components/ui/Button'
-import type { ClientRow, ServiceRow } from '@/types/database'
+import type { ClientRow, ServiceRow, NdisPriceGuideRow } from '@/types/database'
 import type { SessionWithClient } from '@/lib/db'
 import SessionModal from '../sessions/SessionModal'
 
@@ -57,10 +57,11 @@ interface Props {
   sessions: SessionWithClient[]
   clients: ClientRow[]
   services: ServiceRow[]
+  priceGuide: NdisPriceGuideRow[]
   weekStart: string // YYYY-MM-DD — always a Monday, always treated as a plain date
 }
 
-export default function CalendarClient({ sessions, clients, services, weekStart }: Props) {
+export default function CalendarClient({ sessions, clients, services, priceGuide, weekStart }: Props) {
   const router = useRouter()
   const [showModal, setShowModal] = useState(false)
   const [editSession, setEditSession] = useState<SessionWithClient | null>(null)
@@ -280,6 +281,7 @@ export default function CalendarClient({ sessions, clients, services, weekStart 
         <SessionModal
           clients={clients}
           services={services}
+          priceGuide={priceGuide}
           session={editSession}
           defaultDate={slotDate}
           defaultStartTime={slotTime}

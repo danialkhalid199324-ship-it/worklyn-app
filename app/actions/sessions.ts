@@ -76,26 +76,39 @@ async function checkConflict(
 // ---------------------------------------------------------------------------
 
 /**
- * Validates that NDIS structured notes contain all required fields with
- * sufficient detail. Returns the first error string or null if valid.
+ * Validates structured session notes. Accepts both the legacy __ndis_v1 format
+ * and the new __therapy_v1 format. Returns an error string or null if valid.
  */
 function validateCompletionNotes(notesRaw: string | null): string | null {
   if (!notesRaw) return 'Session notes are required to complete this session.'
   try {
     const parsed = JSON.parse(notesRaw)
-    if (!parsed?.__ndis_v1) return 'Session notes are required to complete this session.'
-    const required: { key: string; label: string }[] = [
-      { key: 'participant_presentation', label: 'Participant Presentation' },
-      { key: 'supports_delivered',       label: 'Supports Delivered' },
-      { key: 'participant_response',     label: 'Participant Response' },
-      { key: 'progress_toward_goals',    label: 'Progress Toward Goals' },
-    ]
-    for (const { key, label } of required) {
-      const val = ((parsed[key] as string) ?? '').trim()
-      if (!val) return `${label} is required.`
-      if (val.length < 20) return `${label} is too short — please add more detail.`
+
+    // New therapy format — only require session_note to have sufficient content
+    if (parsed?.__therapy_v1) {
+      const sessionNote = ((parsed.session_note as string) ?? '').trim()
+      if (!sessionNote) return 'Session Note is required.'
+      if (sessionNote.length < 20) return 'Session Note is too short — please add more detail.'
+      return null
     }
-    return null
+
+    // Legacy NDIS format
+    if (parsed?.__ndis_v1) {
+      const required: { key: string; label: string }[] = [
+        { key: 'participant_presentation', label: 'Participant Presentation' },
+        { key: 'supports_delivered',       label: 'Supports Delivered' },
+        { key: 'participant_response',     label: 'Participant Response' },
+        { key: 'progress_toward_goals',    label: 'Progress Toward Goals' },
+      ]
+      for (const { key, label } of required) {
+        const val = ((parsed[key] as string) ?? '').trim()
+        if (!val) return `${label} is required.`
+        if (val.length < 20) return `${label} is too short — please add more detail.`
+      }
+      return null
+    }
+
+    return 'Session notes are required to complete this session.'
   } catch {
     return 'Invalid notes format.'
   }
@@ -109,45 +122,92 @@ type SupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>
 type Practitioner = Awaited<ReturnType<typeof getPractitionerByUserId>>
 
 /**
+ * Returns the next invoice number for a practitioner in INV-YYYY-NNNN format.
+ * Scans existing invoice_numbers for the current year and increments from the
+ * highest sequence found — safe against deleted rows and concurrent inserts
+ * that would break a simple count()+1 approach.
+ */
+async function generateNextInvoiceNumber(
+  supabase: SupabaseClient,
+  practitionerId: string,
+): Promise<string> {
+  const year = new Date().getFullYear()
+  const prefix = `INV-${year}-`
+
+  const { data } = await supabase
+    .from('invoices')
+    .select('invoice_number')
+    .eq('practitioner_id', practitionerId)
+    .like('invoice_number', `${prefix}%`)
+
+  let maxSeq = 0
+  for (const row of data ?? []) {
+    const tail = row.invoice_number?.slice(prefix.length)
+    const seq = tail ? parseInt(tail, 10) : NaN
+    if (!isNaN(seq) && seq > maxSeq) maxSeq = seq
+  }
+
+  return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`
+}
+
+/**
  * Creates a draft invoice for a single completed session.
  * Idempotent: does nothing if the session already has an invoice_id.
- * Errors are logged but never bubble — they must not block the session action.
+ * Returns null on success, or an error message string on failure.
  */
 async function autoCreateDraftInvoice(
   supabase: SupabaseClient,
   practitioner: Practitioner,
   sessionId: string,
-): Promise<void> {
-  // Fetch session with service name; the .is('invoice_id', null) acts as
-  // the idempotency guard — returns null if already invoiced.
-  const { data: raw } = await supabase
+): Promise<string | null> {
+  console.log('[autoCreateDraftInvoice] START — sessionId:', sessionId, 'practitionerId:', practitioner.id)
+
+  // Fetch the session without filtering on invoice_id so we can check it explicitly.
+  const { data: raw, error: fetchErr } = await supabase
     .from('sessions')
     .select('*, services(name)')
     .eq('id', sessionId)
     .eq('practitioner_id', practitioner.id)
-    .is('invoice_id', null)
     .single()
 
-  if (!raw) return // already invoiced or not found
+  if (fetchErr) {
+    console.error('[autoCreateDraftInvoice] STEP 1 FAILED — session fetch error:', JSON.stringify(fetchErr))
+    if (fetchErr.code === 'PGRST116') {
+      return `Session not found for auto-invoice (id: ${sessionId}) — check practitioner_id match`
+    }
+    return `Session fetch failed: ${fetchErr.message}`
+  }
+  if (!raw) {
+    console.error('[autoCreateDraftInvoice] STEP 1 FAILED — raw is null/undefined despite no error')
+    return `Session not found for auto-invoice (id: ${sessionId})`
+  }
 
   type SessionWithService = SessionRow & { services: { name: string } | null }
   const session = raw as unknown as SessionWithService
 
-  const client = await getClientById(practitioner.id, session.client_id)
-  if (!client) {
-    console.error('[autoCreateDraftInvoice] client not found:', session.client_id)
-    return
+  console.log('[autoCreateDraftInvoice] STEP 1 OK — session fetched. client_id:', session.client_id, 'service_id:', session.service_id, 'invoice_id:', session.invoice_id, 'status:', session.status, 'rate:', session.rate, 'duration_minutes:', session.duration_minutes)
+
+  // Idempotency: session is already linked to an invoice
+  if (session.invoice_id) {
+    console.log('[autoCreateDraftInvoice] SKIPPED — session already has invoice_id:', session.invoice_id)
+    return null
+  }
+
+  let client
+  try {
+    client = await getClientById(practitioner.id, session.client_id)
+    console.log('[autoCreateDraftInvoice] STEP 2 OK — client fetched. funding_type:', client.funding_type, 'ndis_management_type:', client.ndis_management_type)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[autoCreateDraftInvoice] STEP 2 FAILED — client fetch error:', msg)
+    return `Client fetch failed: ${msg}`
   }
   const recipient = resolveInvoiceRecipient(client)
+  console.log('[autoCreateDraftInvoice] recipient resolved:', JSON.stringify(recipient))
 
-  // Invoice number — same sequence logic as generateInvoiceFromSessions
-  const { count } = await supabase
-    .from('invoices')
-    .select('*', { count: 'exact', head: true })
-    .eq('practitioner_id', practitioner.id)
-  const year = new Date().getFullYear()
-  const seq = String((count ?? 0) + 1).padStart(4, '0')
-  const invoiceNumber = `INV-${year}-${seq}`
+  // Invoice number — scan existing numbers and increment from max (safe against deletes/races)
+  const invoiceNumber = await generateNextInvoiceNumber(supabase, practitioner.id)
+  console.log('[autoCreateDraftInvoice] STEP 3 — invoice number will be:', invoiceNumber)
 
   const hours = session.duration_minutes / 60
   const amountCents = Math.round(hours * session.rate * 100)
@@ -168,58 +228,78 @@ async function autoCreateDraftInvoice(
   const due = new Date(today)
   due.setDate(due.getDate() + 14)
 
+  const invoicePayload = {
+    practitioner_id: practitioner.id,
+    client_id: session.client_id,
+    invoice_number: invoiceNumber,
+    status: 'draft',
+    subtotal_cents: amountCents,
+    tax_cents: 0,
+    total_cents: amountCents,
+    currency: 'AUD',
+    issued_at: today.toISOString().slice(0, 10),
+    due_at: due.toISOString().slice(0, 10),
+    ...recipient,
+  }
+  console.log('[autoCreateDraftInvoice] STEP 4 — inserting invoice with payload:', JSON.stringify(invoicePayload))
+
   const { data: invoice, error: invoiceErr } = await supabase
     .from('invoices')
-    .insert({
-      practitioner_id: practitioner.id,
-      client_id: session.client_id,
-      invoice_number: invoiceNumber,
-      status: 'draft',
-      subtotal_cents: amountCents,
-      tax_cents: 0,
-      total_cents: amountCents,
-      currency: 'AUD',
-      issued_at: today.toISOString(),
-      due_at: due.toISOString(),
-      ...recipient,
-    })
+    .insert(invoicePayload)
     .select('id')
     .single()
 
   if (invoiceErr || !invoice) {
-    console.error('[autoCreateDraftInvoice] invoice insert failed:', invoiceErr?.message)
-    return
+    console.error('[autoCreateDraftInvoice] STEP 4 FAILED — invoice insert error:', JSON.stringify(invoiceErr))
+    return `Invoice insert failed: ${invoiceErr?.message ?? 'unknown error'}`
   }
+  console.log('[autoCreateDraftInvoice] STEP 4 OK — invoice created with id:', invoice.id)
 
-  const { error: itemErr } = await supabase.from('invoice_items').insert({
+  const lineItemPayload = {
     invoice_id: invoice.id,
     description,
     quantity: parseFloat(hours.toFixed(4)),
     unit_price_cents: Math.round(session.rate * 100),
-  })
+  }
+  console.log('[autoCreateDraftInvoice] STEP 5 — inserting line item:', JSON.stringify(lineItemPayload))
+
+  const { error: itemErr } = await supabase.from('invoice_items').insert(lineItemPayload)
 
   if (itemErr) {
-    console.error('[autoCreateDraftInvoice] line item failed:', itemErr.message)
+    console.error('[autoCreateDraftInvoice] STEP 5 FAILED — line item insert error:', JSON.stringify(itemErr))
     await supabase.from('invoices').delete().eq('id', invoice.id)
-    return
+    return `Invoice line item failed: ${itemErr.message}`
   }
+  console.log('[autoCreateDraftInvoice] STEP 5 OK — line item inserted')
 
-  // Link session → invoice; final idempotency guard via .is('invoice_id', null)
-  const { error: linkErr } = await supabase
+  // Link session → invoice; idempotency guard via .is('invoice_id', null)
+  console.log('[autoCreateDraftInvoice] STEP 6 — updating session invoice_id to:', invoice.id, 'for session:', session.id)
+  const { data: linked, error: linkErr } = await supabase
     .from('sessions')
     .update({ invoice_id: invoice.id })
     .eq('id', session.id)
     .eq('practitioner_id', practitioner.id)
     .is('invoice_id', null)
+    .select('id')
 
   if (linkErr) {
-    console.error('[autoCreateDraftInvoice] session link failed:', linkErr.message)
+    console.error('[autoCreateDraftInvoice] STEP 6 FAILED — session link error:', JSON.stringify(linkErr))
     await supabase.from('invoices').delete().eq('id', invoice.id)
-    return
+    return `Session link failed: ${linkErr.message}`
+  }
+  console.log('[autoCreateDraftInvoice] STEP 6 result — linked rows:', JSON.stringify(linked))
+
+  if (!linked || linked.length === 0) {
+    // 0 rows updated: session was concurrently invoiced — delete duplicate and treat as success
+    console.warn('[autoCreateDraftInvoice] STEP 6 — 0 rows updated on session link. Deleting orphan invoice', invoice.id, '— treating as concurrent-invoice success.')
+    await supabase.from('invoices').delete().eq('id', invoice.id)
+    return null
   }
 
+  console.log('[autoCreateDraftInvoice] STEP 6 OK — session linked to invoice. Rows updated:', linked.length)
+
   // Set audit lock metadata — non-critical, requires DB columns to exist
-  await supabase
+  const { error: lockErr } = await supabase
     .from('sessions')
     .update({
       notes_locked_at: new Date().toISOString(),
@@ -227,6 +307,15 @@ async function autoCreateDraftInvoice(
     })
     .eq('id', session.id)
     .eq('practitioner_id', practitioner.id)
+
+  if (lockErr) {
+    console.warn('[autoCreateDraftInvoice] STEP 7 — audit lock update failed (non-critical):', lockErr.message)
+  } else {
+    console.log('[autoCreateDraftInvoice] STEP 7 OK — audit lock set')
+  }
+
+  console.log('[autoCreateDraftInvoice] COMPLETE — invoice', invoice.id, 'linked to session', session.id)
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +331,8 @@ export async function createSession(formData: FormData) {
   const serviceDate = formData.get('service_date') as string
   const durationMinutes = parseInt(formData.get('duration_minutes') as string)
   const rate = parseFloat(formData.get('rate') as string)
+  const incomingStatus = formData.get('status') as string
+  console.log('[createSession] CALLED — clientId:', clientId, 'serviceDate:', serviceDate, 'status:', incomingStatus, 'practitionerId:', practitioner.id)
 
   if (!clientId || !serviceDate) return { error: 'Client and date are required.' }
   if (!durationMinutes || durationMinutes <= 0) return { error: 'Duration must be at least 1 minute.' }
@@ -291,13 +382,26 @@ export async function createSession(formData: FormData) {
   if (error) return { error: error.message }
 
   // Auto-create a draft invoice when the session is created as completed
+  console.log('[createSession] session inserted — id:', newSession?.id, 'status:', sessionStatus)
   if (sessionStatus === 'completed' && newSession) {
+    console.log('[createSession] triggering autoCreateDraftInvoice for session:', newSession.id)
+    let autoInvoiceErr: string | null = null
     try {
-      await autoCreateDraftInvoice(supabase, practitioner, newSession.id)
+      autoInvoiceErr = await autoCreateDraftInvoice(supabase, practitioner, newSession.id)
     } catch (err) {
-      console.error('[createSession] auto-invoice failed:', err)
+      autoInvoiceErr = err instanceof Error ? err.message : String(err)
+      console.error('[createSession] auto-invoice threw:', autoInvoiceErr)
     }
+    console.log('[createSession] autoCreateDraftInvoice returned:', autoInvoiceErr)
     revalidatePath('/dashboard/invoices')
+    if (autoInvoiceErr) {
+      revalidatePath('/dashboard/sessions')
+      revalidatePath(`/dashboard/clients/${clientId}`)
+      return {
+        success: true as const,
+        invoiceWarning: `Session created, but the invoice could not be created automatically. DB error: ${autoInvoiceErr}`,
+      }
+    }
   }
 
   // Send confirmation email for scheduled sessions — never blocks or fails the action.
@@ -388,9 +492,10 @@ export async function updateSession(sessionId: string, formData: FormData) {
   // Auto-create a draft invoice when a session is marked completed
   if (newStatus === 'completed' && updated && updated.length > 0) {
     try {
-      await autoCreateDraftInvoice(supabase, practitioner, sessionId)
+      const invoiceErr = await autoCreateDraftInvoice(supabase, practitioner, sessionId)
+      if (invoiceErr) console.error('[updateSession] auto-invoice failed for session', sessionId, ':', invoiceErr)
     } catch (err) {
-      console.error('[updateSession] auto-invoice failed:', err)
+      console.error('[updateSession] auto-invoice threw:', err)
     }
     revalidatePath('/dashboard/invoices')
   }
@@ -424,6 +529,36 @@ export async function deleteSession(sessionId: string) {
     .eq('id', sessionId)
     .eq('practitioner_id', practitioner.id)
     .is('invoice_id', null) // secondary guard
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/dashboard/sessions')
+  revalidatePath('/dashboard/calendar')
+  revalidatePath(`/dashboard/clients/${existing.client_id}`)
+  return { success: true }
+}
+
+export async function cancelSession(sessionId: string) {
+  const user = await requireAuth()
+  const practitioner = await getPractitionerByUserId(user.id)
+  const supabase = await createServerSupabaseClient()
+
+  const { data: existing } = await supabase
+    .from('sessions')
+    .select('invoice_id, client_id, status')
+    .eq('id', sessionId)
+    .eq('practitioner_id', practitioner.id)
+    .single()
+  if (!existing) return { error: 'Session not found.' }
+  if (existing.invoice_id) return { error: 'Cannot cancel an invoiced session.' }
+  if (existing.status === 'cancelled') return { success: true }
+
+  const { error } = await supabase
+    .from('sessions')
+    .update({ status: 'cancelled' as SessionStatus })
+    .eq('id', sessionId)
+    .eq('practitioner_id', practitioner.id)
+    .is('invoice_id', null)
 
   if (error) return { error: error.message }
 
@@ -493,15 +628,8 @@ export async function generateInvoiceFromSessions(formData: FormData) {
     }
   })
 
-  // Invoice number
-  const { count } = await supabase
-    .from('invoices')
-    .select('*', { count: 'exact', head: true })
-    .eq('practitioner_id', practitioner.id)
-
-  const year = new Date().getFullYear()
-  const seq = String((count ?? 0) + 1).padStart(4, '0')
-  const invoiceNumber = `INV-${year}-${seq}`
+  // Invoice number — scan existing numbers and increment from max (safe against deletes/races)
+  const invoiceNumber = await generateNextInvoiceNumber(supabase, practitioner.id)
 
   const today = new Date()
   const due = new Date(today)
@@ -578,6 +706,8 @@ export async function completeSession(sessionId: string, notesJson: string) {
   const practitioner = await getPractitionerByUserId(user.id)
   const supabase = await createServerSupabaseClient()
 
+  console.log('[completeSession] CALLED — sessionId:', sessionId, 'practitionerId:', practitioner.id)
+
   // Validate notes server-side (defence-in-depth)
   const notesError = validateCompletionNotes(notesJson)
   if (notesError) return { error: notesError }
@@ -602,15 +732,26 @@ export async function completeSession(sessionId: string, notesJson: string) {
 
   if (error) return { error: error.message }
 
+  console.log('[completeSession] session status updated — now calling autoCreateDraftInvoice for:', sessionId)
+  let autoInvoiceErr: string | null = null
   try {
-    await autoCreateDraftInvoice(supabase, practitioner, sessionId)
+    autoInvoiceErr = await autoCreateDraftInvoice(supabase, practitioner, sessionId)
   } catch (err) {
-    console.error('[completeSession] auto-invoice failed:', err)
+    autoInvoiceErr = err instanceof Error ? err.message : String(err)
+    console.error('[completeSession] auto-invoice threw:', autoInvoiceErr)
   }
+  console.log('[completeSession] autoCreateDraftInvoice returned:', autoInvoiceErr)
 
   revalidatePath('/dashboard/sessions')
   revalidatePath('/dashboard/invoices')
   revalidatePath('/dashboard/calendar')
   revalidatePath(`/dashboard/clients/${existing.client_id}`)
+
+  if (autoInvoiceErr) {
+    return {
+      success: true as const,
+      invoiceWarning: `Session completed, but the invoice could not be created automatically. DB error: ${autoInvoiceErr}`,
+    }
+  }
   return { success: true as const }
 }

@@ -223,6 +223,162 @@ export async function sendInvoice(invoiceId: string) {
   return { success: true }
 }
 
+export async function deleteInvoice(invoiceId: string) {
+  const user = await requireAuth()
+  const practitioner = await getPractitionerByUserId(user.id)
+  const supabase = await createServerSupabaseClient()
+
+  const { data: existing } = await supabase
+    .from('invoices')
+    .select('id, status, client_id')
+    .eq('id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+    .single()
+
+  if (!existing) return { error: 'Invoice not found.' }
+  if (existing.status !== 'draft' && existing.status !== 'cancelled') {
+    return { error: 'Only draft or cancelled invoices can be deleted.' }
+  }
+
+  // Unlink sessions (do not delete them)
+  await supabase
+    .from('sessions')
+    .update({ invoice_id: null })
+    .eq('invoice_id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+
+  await supabase.from('invoice_items').delete().eq('invoice_id', invoiceId)
+
+  const { error } = await supabase
+    .from('invoices')
+    .delete()
+    .eq('id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/dashboard/invoices')
+  revalidatePath('/dashboard/sessions')
+  if (existing.client_id) revalidatePath(`/dashboard/clients/${existing.client_id}`)
+  return { success: true }
+}
+
+export async function updateInvoice(
+  invoiceId: string,
+  formData: FormData,
+  reason?: string,
+) {
+  const user = await requireAuth()
+  const practitioner = await getPractitionerByUserId(user.id)
+  const supabase = await createServerSupabaseClient()
+
+  const existing = await getInvoiceById(practitioner.id, invoiceId)
+  const needsAudit = existing.status === 'sent' || existing.status === 'paid'
+
+  const invoiceNumber = (formData.get('invoice_number') as string).trim()
+  const clientId = formData.get('client_id') as string
+  if (!invoiceNumber) return { error: 'Invoice number is required.' }
+  if (!clientId) return { error: 'Client is required.' }
+
+  let lineItems: LineItemInput[] = []
+  try {
+    lineItems = JSON.parse((formData.get('line_items') as string) || '[]')
+  } catch {
+    return { error: 'Invalid line items.' }
+  }
+  if (!lineItems.length) return { error: 'At least one line item is required.' }
+
+  const client = await getClientById(practitioner.id, clientId)
+  if (!client) return { error: 'Client not found.' }
+  const recipient = resolveInvoiceRecipient(client)
+
+  let subtotalCents = 0
+  for (const item of lineItems) {
+    const qty = parseFloat(item.quantity) || 0
+    const priceCents = Math.round(parseFloat(item.unit_price) * 100)
+    subtotalCents += Math.round(qty * priceCents)
+  }
+
+  const notesValue = (formData.get('notes') as string)?.trim() || null
+  const issuedAt = (formData.get('issued_at') as string) || null
+  const dueAt = (formData.get('due_at') as string) || null
+
+  // Never touch status or paid_at — preserve them as-is
+  const { error: updateErr } = await supabase
+    .from('invoices')
+    .update({
+      client_id: clientId,
+      invoice_number: invoiceNumber,
+      subtotal_cents: subtotalCents,
+      tax_cents: 0,
+      total_cents: subtotalCents,
+      notes: notesValue,
+      issued_at: issuedAt,
+      due_at: dueAt,
+      updated_at: new Date().toISOString(),
+      ...recipient,
+    })
+    .eq('id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+
+  if (updateErr) return { error: updateErr.message }
+
+  // Replace line items
+  await supabase.from('invoice_items').delete().eq('invoice_id', invoiceId)
+  const { error: itemsErr } = await supabase.from('invoice_items').insert(
+    lineItems.map((item) => ({
+      invoice_id: invoiceId,
+      description: item.description.trim(),
+      quantity: parseFloat(item.quantity) || 1,
+      unit_price_cents: Math.round(parseFloat(item.unit_price) * 100),
+    })),
+  )
+  if (itemsErr) return { error: `Failed to update line items: ${itemsErr.message}` }
+
+  if (needsAudit) {
+    await supabase.from('invoice_audit_log').insert({
+      invoice_id: invoiceId,
+      practitioner_id: practitioner.id,
+      edited_by: user.id,
+      previous_values: {
+        invoice_number: existing.invoice_number,
+        status: existing.status,
+        subtotal_cents: existing.subtotal_cents,
+        tax_cents: existing.tax_cents,
+        total_cents: existing.total_cents,
+        notes: existing.notes,
+        issued_at: existing.issued_at,
+        due_at: existing.due_at,
+        invoice_items: existing.invoice_items.map((i) => ({
+          description: i.description,
+          quantity: i.quantity,
+          unit_price_cents: i.unit_price_cents,
+        })),
+      },
+      updated_values: {
+        invoice_number: invoiceNumber,
+        subtotal_cents: subtotalCents,
+        tax_cents: 0,
+        total_cents: subtotalCents,
+        notes: notesValue,
+        issued_at: issuedAt,
+        due_at: dueAt,
+        invoice_items: lineItems.map((item) => ({
+          description: item.description.trim(),
+          quantity: parseFloat(item.quantity) || 1,
+          unit_price_cents: Math.round(parseFloat(item.unit_price) * 100),
+        })),
+      },
+      reason: reason?.trim() || null,
+    })
+  }
+
+  revalidatePath('/dashboard/invoices')
+  revalidatePath(`/dashboard/invoices/${invoiceId}`)
+  if (clientId) revalidatePath(`/dashboard/clients/${clientId}`)
+  return { success: true }
+}
+
 export async function getNextInvoiceNumber(practitionerId: string): Promise<string> {
   const supabase = await createServerSupabaseClient()
   const { count } = await supabase

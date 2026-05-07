@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getClients, getServices, getSessionsForDateRange } from '@/lib/db'
+import { getPractitionerByUserId, getClients, getServices, getSessionsForDateRange, getNdisPriceGuide } from '@/lib/db'
 import CalendarClient from './CalendarClient'
 
 export const metadata: Metadata = { title: 'Calendar' }
@@ -42,11 +42,17 @@ export default async function CalendarPage({
     getServices(practitioner.id),
   ])
 
+  const supportNums = Array.from(new Set(
+    services.map((s) => s.support_item_number).filter((n): n is string => n !== null),
+  ))
+  const priceGuide = await getNdisPriceGuide(supportNums)
+
   return (
     <CalendarClient
       sessions={sessions}
       clients={clients}
       services={services}
+      priceGuide={priceGuide}
       weekStart={from}
     />
   )

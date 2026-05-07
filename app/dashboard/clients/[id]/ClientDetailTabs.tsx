@@ -14,6 +14,8 @@ import type { ClientRow, InvoiceRow } from '@/types/database'
 import type { ClientEventRow, ClientSessionNote } from '@/lib/db'
 import { parseNDISNotes } from '@/app/dashboard/sessions/NDISNotesFields'
 import type { NDISNotes } from '@/app/dashboard/sessions/NDISNotesFields'
+import { parseTherapyNotes } from '@/app/dashboard/sessions/TherapyNotesFields'
+import type { TherapyNotes } from '@/app/dashboard/sessions/TherapyNotesFields'
 
 type DlRow = { label: string; value: string | null | undefined }
 
@@ -273,7 +275,7 @@ function EventTable({ rows, label }: { rows: ClientEventRow[]; label: string }) 
                 {/* Invoice status */}
                 <td className="px-4 py-3">
                   {ev.invoice_id ? (
-                    <Link href="/dashboard/invoices" className="inline-flex">
+                    <Link href={`/dashboard/invoices/${ev.invoice_id}`} className="inline-flex" onClick={(e) => e.stopPropagation()}>
                       <Badge color={INVOICE_STATUS_COLORS['sent']}>Invoiced</Badge>
                     </Link>
                   ) : (
@@ -346,6 +348,135 @@ function NdisNotesSections({ ndis }: { ndis: NDISNotes }) {
   )
 }
 
+function TherapyNotesSections({ therapy }: { therapy: TherapyNotes }) {
+  const obsGroups: { label: string; values: string[] }[] = [
+    { label: 'Engagement', values: therapy.obs_engagement },
+    { label: 'Emotional Regulation', values: therapy.obs_emotional_regulation },
+    { label: 'Communication', values: therapy.obs_communication },
+    { label: 'Social Interaction', values: therapy.obs_social_interaction },
+    { label: 'Behaviour of Concern', values: therapy.obs_behaviour_of_concern },
+  ]
+  const hasObs = obsGroups.some(({ values }) => values.length > 0)
+
+  return (
+    <div className="space-y-4">
+      {/* Focus */}
+      {(therapy.focus_areas.length > 0 || therapy.focus_other.trim()) && (
+        <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Focus of the Session</p>
+          <ul className="space-y-0.5">
+            {therapy.focus_areas.map((f) => (
+              <li key={f} className="flex items-start gap-1.5 text-sm text-gray-700">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400" />
+                {f}
+              </li>
+            ))}
+            {therapy.focus_other.trim() && (
+              <li className="flex items-start gap-1.5 text-sm text-gray-500">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300" />
+                {therapy.focus_other.trim()}
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {/* Observations */}
+      {hasObs && (
+        <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Session Observations</p>
+          <div className="space-y-1.5">
+            {obsGroups.filter(({ values }) => values.length > 0).map(({ label, values }) => (
+              <div key={label} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span className="text-xs font-medium text-gray-500">{label}:</span>
+                <span className="text-sm text-gray-700">{values.join(', ')}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Session Note */}
+      {therapy.session_note.trim() && (
+        <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Session Note</p>
+          <p className="text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">{therapy.session_note}</p>
+        </div>
+      )}
+
+      {/* Strategies */}
+      {(therapy.strategies_used.length > 0 || therapy.strategies_other.trim()) && (
+        <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Strategies Used</p>
+          <ul className="space-y-0.5">
+            {therapy.strategies_used.map((s) => (
+              <li key={s} className="flex items-start gap-1.5 text-sm text-gray-700">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400" />
+                {s}
+              </li>
+            ))}
+            {therapy.strategies_other.trim() && (
+              <li className="flex items-start gap-1.5 text-sm text-gray-500">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300" />
+                Other: {therapy.strategies_other.trim()}
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {/* Response */}
+      {(therapy.response_to_strategies || therapy.response_comment.trim()) && (
+        <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Response to Strategies</p>
+          {therapy.response_to_strategies && (
+            <p className="text-sm font-medium text-gray-700">{therapy.response_to_strategies}</p>
+          )}
+          {therapy.response_comment.trim() && (
+            <p className="mt-0.5 text-sm text-gray-600">{therapy.response_comment.trim()}</p>
+          )}
+        </div>
+      )}
+
+      {/* Follow Up */}
+      {(therapy.follow_up.length > 0 || therapy.follow_up_notes.trim()) && (
+        <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Follow Up</p>
+          <ul className="space-y-0.5">
+            {therapy.follow_up.map((f) => (
+              <li key={f} className="flex items-start gap-1.5 text-sm text-gray-700">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400" />
+                {f}
+              </li>
+            ))}
+            {therapy.follow_up_notes.trim() && (
+              <li className="mt-1 text-sm text-gray-500">{therapy.follow_up_notes.trim()}</li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {/* Plan */}
+      {(therapy.plan_for_next.length > 0 || therapy.plan_notes.trim()) && (
+        <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Plan for Next Session</p>
+          <ul className="space-y-0.5">
+            {therapy.plan_for_next.map((p) => (
+              <li key={p} className="flex items-start gap-1.5 text-sm text-gray-700">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400" />
+                {p}
+              </li>
+            ))}
+            {therapy.plan_notes.trim() && (
+              <li className="mt-1 text-sm text-gray-500">{therapy.plan_notes.trim()}</li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ReportsTab({ notes }: { notes: ClientSessionNote[] }) {
   if (!notes.length) {
     return <EmptyState message="No session notes recorded yet." />
@@ -354,7 +485,8 @@ function ReportsTab({ notes }: { notes: ClientSessionNote[] }) {
   return (
     <div className="space-y-4">
       {notes.map((session) => {
-        const ndis = parseNDISNotes(session.notes)
+        const therapy = parseTherapyNotes(session.notes)
+        const ndis = !therapy ? parseNDISNotes(session.notes) : null
         const formattedDate = new Date(`${session.service_date}T12:00:00`).toLocaleDateString('en-AU', {
           weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
         })
@@ -379,7 +511,7 @@ function ReportsTab({ notes }: { notes: ClientSessionNote[] }) {
               <div className="flex shrink-0 items-center gap-2">
                 {session.invoice_id && (
                   session.invoice_number ? (
-                    <Link href="/dashboard/invoices" className="inline-flex">
+                    <Link href={`/dashboard/invoices/${session.invoice_id}`} className="inline-flex">
                       <Badge color="amber">Locked · {session.invoice_number}</Badge>
                     </Link>
                   ) : (
@@ -392,7 +524,9 @@ function ReportsTab({ notes }: { notes: ClientSessionNote[] }) {
               </div>
             </div>
 
-            {ndis ? (
+            {therapy ? (
+              <TherapyNotesSections therapy={therapy} />
+            ) : ndis ? (
               <NdisNotesSections ndis={ndis} />
             ) : session.notes ? (
               <p className="text-sm text-gray-700 whitespace-pre-wrap">{session.notes}</p>
@@ -441,8 +575,12 @@ function InvoicesTab({ invoices, client }: { invoices: InvoiceRow[]; client: Cli
               const isNdia = recipType === 'ndia_claim'
 
               return (
-                <tr key={inv.id} className="border-b border-gray-50 last:border-0">
-                  <td className="px-4 py-3 font-medium text-gray-900">{inv.invoice_number}</td>
+                <tr key={inv.id} className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                  <td className="px-4 py-3 font-medium">
+                    <Link href={`/dashboard/invoices/${inv.id}`} className="text-indigo-600 hover:underline" onClick={(e) => e.stopPropagation()}>
+                      {inv.invoice_number}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3">
                     {isNdia ? (
                       <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">

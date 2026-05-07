@@ -1,18 +1,22 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import type { ClientRow, ServiceRow } from '@/types/database'
+import { deleteSession, cancelSession } from '@/app/actions/sessions'
+import type { ClientRow, ServiceRow, NdisPriceGuideRow } from '@/types/database'
 import type { SessionWithClient } from '@/lib/db'
 import SessionModal from './SessionModal'
 import GenerateInvoiceModal from './GenerateInvoiceModal'
+import { useRouter } from 'next/navigation'
 
 interface Props {
   sessions: SessionWithClient[]
   clients: ClientRow[]
   services: ServiceRow[]
+  priceGuide: NdisPriceGuideRow[]
 }
 
 const STATUS_COLOR = {
@@ -27,11 +31,42 @@ function sessionAmount(s: SessionWithClient) {
   return Math.round((s.duration_minutes / 60) * s.rate * 100)
 }
 
-export default function SessionsClient({ sessions, clients, services }: Props) {
+export default function SessionsClient({ sessions, clients, services, priceGuide }: Props) {
+  const router = useRouter()
   const [filter, setFilter] = useState<Filter>('all')
   const [showNew, setShowNew] = useState(false)
   const [showGenerate, setShowGenerate] = useState(false)
   const [editSession, setEditSession] = useState<SessionWithClient | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<SessionWithClient | null>(null)
+  const [confirmCancel, setConfirmCancel] = useState<SessionWithClient | null>(null)
+  const [actionPending, startActionTransition] = useTransition()
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  function handleDelete(s: SessionWithClient) {
+    setActionError(null)
+    startActionTransition(async () => {
+      const result = await deleteSession(s.id)
+      if ('error' in result) {
+        setActionError(result.error ?? null)
+      } else {
+        setConfirmDelete(null)
+        router.refresh()
+      }
+    })
+  }
+
+  function handleCancel(s: SessionWithClient) {
+    setActionError(null)
+    startActionTransition(async () => {
+      const result = await cancelSession(s.id)
+      if ('error' in result) {
+        setActionError(result.error ?? null)
+      } else {
+        setConfirmCancel(null)
+        router.refresh()
+      }
+    })
+  }
 
   const filtered = sessions.filter((s) => {
     if (filter === 'scheduled') return s.status === 'scheduled'
@@ -100,6 +135,7 @@ export default function SessionsClient({ sessions, clients, services }: Props) {
                 <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-400">Amount</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-gray-400">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Invoice</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -142,6 +178,42 @@ export default function SessionsClient({ sessions, clients, services }: Props) {
                       <span className="text-gray-400">—</span>
                     )}
                   </td>
+                  {/* Per-row actions */}
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => setEditSession(s)}
+                        title="Edit"
+                        className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828A2 2 0 0110 16.414H8v-2a2 2 0 01.586-1.414z" />
+                        </svg>
+                      </button>
+                      {s.status === 'scheduled' && !s.invoice_id && (
+                        <button
+                          onClick={() => setConfirmCancel(s)}
+                          title="Cancel session"
+                          className="rounded p-1.5 text-gray-400 hover:bg-amber-50 hover:text-amber-600"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636L5.636 18.364M5.636 5.636l12.728 12.728" />
+                          </svg>
+                        </button>
+                      )}
+                      {!s.invoice_id && (
+                        <button
+                          onClick={() => setConfirmDelete(s)}
+                          title="Delete"
+                          className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4h6v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -154,6 +226,7 @@ export default function SessionsClient({ sessions, clients, services }: Props) {
         <SessionModal
           clients={clients}
           services={services}
+          priceGuide={priceGuide}
           session={editSession}
           onClose={() => { setShowNew(false); setEditSession(null) }}
         />
@@ -165,6 +238,35 @@ export default function SessionsClient({ sessions, clients, services }: Props) {
           sessions={sessions.filter((s) => s.status === 'completed' && !s.invoice_id)}
           onClose={() => setShowGenerate(false)}
         />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete session?"
+          message="Are you sure you want to delete this session? This action cannot be undone."
+          confirmLabel="Delete session"
+          loading={actionPending}
+          onConfirm={() => handleDelete(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {confirmCancel && (
+        <ConfirmDialog
+          title="Cancel session?"
+          message="Are you sure you want to cancel this session? This action cannot be undone."
+          confirmLabel="Cancel session"
+          loading={actionPending}
+          onConfirm={() => handleCancel(confirmCancel)}
+          onCancel={() => setConfirmCancel(null)}
+        />
+      )}
+
+      {actionError && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-lg">
+          {actionError}
+          <button onClick={() => setActionError(null)} className="ml-3 font-medium underline">Dismiss</button>
+        </div>
       )}
     </div>
   )

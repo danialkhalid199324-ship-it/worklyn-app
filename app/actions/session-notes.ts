@@ -4,8 +4,31 @@ import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { requireAuth } from '@/lib/auth'
 import { getPractitionerByUserId, getAppointmentById, getSessionNoteByAppointmentId } from '@/lib/db'
-import { generateSessionReport } from '@/services/ai'
+import { generateSessionReport, generateTherapyNoteText } from '@/services/ai'
 import { formatDate } from '@/lib/utils'
+
+// ---------------------------------------------------------------------------
+// Generate professional narrative from structured therapy note data
+// ---------------------------------------------------------------------------
+
+export async function generateProfessionalNote({
+  formattedNote,
+  clientName,
+  serviceName,
+}: {
+  formattedNote: string
+  clientName?: string
+  serviceName?: string
+}): Promise<{ text?: string; error?: string }> {
+  await requireAuth()
+
+  try {
+    const text = await generateTherapyNoteText({ formattedNote, clientName, serviceName })
+    return { text }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'AI generation failed.' }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Save (upsert) a structured session note

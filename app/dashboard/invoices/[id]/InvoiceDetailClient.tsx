@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation'
 import Card from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
-import { sendInvoice, updateInvoiceStatus } from '@/app/actions/invoices'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import InvoiceModal from '@/app/dashboard/invoices/InvoiceModal'
+import { sendInvoice, updateInvoiceStatus, deleteInvoice } from '@/app/actions/invoices'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import { recipientLabel } from '@/lib/invoice-routing'
 import type { ClientRow, InvoiceItemRow, InvoiceRow, InvoiceStatus, OrgSettingsRow, PractitionerRow, SessionRow } from '@/types/database'
@@ -20,17 +22,28 @@ interface Props {
   orgSettings: OrgSettingsRow | null
   practitioner: PractitionerRow
   sessions: SessionRow[]
+  clients: ClientRow[]
 }
 
 const STATUS_COLOR: Record<InvoiceStatus, 'gray' | 'blue' | 'green' | 'amber' | 'red'> = {
   draft: 'gray', sent: 'blue', paid: 'green', overdue: 'red', cancelled: 'gray',
 }
 
-export default function InvoiceDetailClient({ invoice, orgSettings, practitioner, sessions }: Props) {
+const EDITABLE_STATUSES: InvoiceStatus[] = ['draft', 'sent', 'paid']
+
+export default function InvoiceDetailClient({ invoice, orgSettings, practitioner, sessions, clients }: Props) {
   const [sendPending, startSendTransition] = useTransition()
   const [statusPending, startStatusTransition] = useTransition()
+  const [deletePending, startDeleteTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // Edit flow state
+  const [editWarningOpen, setEditWarningOpen] = useState(false)
+  const [editReason, setEditReason] = useState('')
+  const [editModalOpen, setEditModalOpen] = useState(false)
+
   const router = useRouter()
 
   const businessName = orgSettings?.business_name ?? `${practitioner.first_name} ${practitioner.last_name}`
@@ -38,8 +51,43 @@ export default function InvoiceDetailClient({ invoice, orgSettings, practitioner
     ? `${orgSettings.payment_reference_prefix}-${invoice.invoice_number}`
     : invoice.invoice_number
 
+  const canEdit = EDITABLE_STATUSES.includes(invoice.status)
   const canSend = invoice.status === 'draft' || invoice.status === 'sent'
   const canMarkPaid = invoice.status === 'sent' || invoice.status === 'overdue'
+  // Draft and cancelled can be deleted
+  const canDelete = invoice.status === 'draft' || invoice.status === 'cancelled'
+  const needsWarningBeforeEdit = invoice.status === 'sent' || invoice.status === 'paid'
+
+  function handleEditClick() {
+    if (needsWarningBeforeEdit) {
+      setEditWarningOpen(true)
+    } else {
+      setEditModalOpen(true)
+    }
+  }
+
+  function handleWarningConfirm() {
+    setEditWarningOpen(false)
+    setEditModalOpen(true)
+  }
+
+  function handleWarningCancel() {
+    setEditWarningOpen(false)
+    setEditReason('')
+  }
+
+  function handleDelete() {
+    setError(null)
+    startDeleteTransition(async () => {
+      const result = await deleteInvoice(invoice.id)
+      if (result?.error) {
+        setError(result.error)
+        setShowDeleteConfirm(false)
+      } else {
+        router.push('/dashboard/invoices')
+      }
+    })
+  }
 
   function handleSend() {
     setError(null)
@@ -92,6 +140,26 @@ export default function InvoiceDetailClient({ invoice, orgSettings, practitioner
 
         {/* Action buttons */}
         <div className="flex items-center gap-2">
+          {canDelete && (
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteConfirm(true)}
+              loading={deletePending}
+              className="text-red-600 hover:border-red-300 hover:bg-red-50"
+            >
+              Delete
+            </Button>
+          )}
+
+          {canEdit && (
+            <Button variant="outline" onClick={handleEditClick}>
+              <svg className="mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit invoice
+            </Button>
+          )}
+
           <a
             href={`/api/invoices/${invoice.id}/pdf`}
             target="_blank"
@@ -297,6 +365,83 @@ export default function InvoiceDetailClient({ invoice, orgSettings, practitioner
             </tbody>
           </table>
         </Card>
+      )}
+
+      {/* Delete confirmation */}
+      {showDeleteConfirm && (
+        <ConfirmDialog
+          title="Delete invoice?"
+          message={sessions.length > 0
+            ? `This will delete invoice ${invoice.invoice_number} and unlink ${sessions.length} session${sessions.length !== 1 ? 's' : ''} (sessions will not be deleted). This action cannot be undone.`
+            : `Are you sure you want to delete invoice ${invoice.invoice_number}? This action cannot be undone.`}
+          confirmLabel="Delete invoice"
+          loading={deletePending}
+          onConfirm={handleDelete}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* Edit warning dialog for sent/paid invoices */}
+      {editWarningOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-3 flex items-center gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100">
+                <svg className="h-5 w-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-gray-900">
+                Edit {invoice.status} invoice?
+              </h3>
+            </div>
+            <p className="text-sm text-gray-600">
+              This invoice has already been <strong>{invoice.status}</strong>. Editing it may affect
+              audit records and payment reconciliation. Do you want to continue?
+            </p>
+            <div className="mt-4">
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Reason for editing <span className="font-normal text-gray-400">(optional)</span>
+              </label>
+              <textarea
+                value={editReason}
+                onChange={(e) => setEditReason(e.target.value)}
+                placeholder="e.g. Correcting line item description…"
+                rows={2}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400"
+              />
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={handleWarningCancel}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleWarningConfirm}
+                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600"
+              >
+                Continue editing
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editModalOpen && (
+        <InvoiceModal
+          clients={clients}
+          nextInvoiceNumber=""
+          orgSettings={orgSettings}
+          invoice={invoice}
+          editReason={editReason}
+          onClose={() => {
+            setEditModalOpen(false)
+            setEditReason('')
+          }}
+        />
       )}
     </div>
   )

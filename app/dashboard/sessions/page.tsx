@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getClients, getSessions, getServices } from '@/lib/db'
+import { getPractitionerByUserId, getClients, getSessions, getServices, getNdisPriceGuide } from '@/lib/db'
 import SessionsClient from './SessionsClient'
 
 export const metadata: Metadata = { title: 'Sessions' }
@@ -15,5 +15,10 @@ export default async function SessionsPage() {
     getServices(practitioner.id),
   ])
 
-  return <SessionsClient sessions={sessions} clients={clients} services={services} />
+  const supportNums = Array.from(new Set(
+    services.map((s) => s.support_item_number).filter((n): n is string => n !== null),
+  ))
+  const priceGuide = await getNdisPriceGuide(supportNums)
+
+  return <SessionsClient sessions={sessions} clients={clients} services={services} priceGuide={priceGuide} />
 }

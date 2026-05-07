@@ -10,6 +10,7 @@ import type {
   InvoiceItemRow,
   OrgSettingsRow,
   SessionNotificationRow,
+  NdisPriceGuideRow,
 } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -329,15 +330,17 @@ export type FullInvoice = InvoiceRow & {
 
 export async function getInvoiceById(practitionerId: string, invoiceId: string): Promise<FullInvoice> {
   const supabase = await createServerSupabaseClient()
+  console.log('[getInvoiceById] querying id:', invoiceId, 'practitioner:', practitionerId)
+  // Use explicit FK column hints to avoid PostgREST ambiguity when resolving relations
   const { data, error } = await supabase
     .from('invoices')
-    .select('*, clients(*), invoice_items(*)')
+    .select('*, clients!invoices_client_id_fkey(*), invoice_items(*)')
     .eq('practitioner_id', practitionerId)
     .eq('id', invoiceId)
     .single()
+  console.log('[getInvoiceById] data:', data ? 'found' : 'null', 'error:', error)
   if (error) throw error
   const row = data as unknown as FullInvoice
-  // Guarantee invoice_items is always an array even if the join returned null
   if (!row.invoice_items) (row as unknown as Record<string, unknown>).invoice_items = []
   return row
 }
@@ -457,6 +460,26 @@ export type ClientSessionNote = {
   invoice_number: string | null
 }
 
+/**
+ * Fetches NDIS price guide entries for the given support item numbers.
+ * Only returns currently-active entries (effective_to IS NULL or >= today).
+ * When multiple versions exist for the same number, returns all (caller picks first).
+ */
+export async function getNdisPriceGuide(
+  supportItemNumbers: string[],
+): Promise<NdisPriceGuideRow[]> {
+  if (supportItemNumbers.length === 0) return []
+  const supabase = await createServerSupabaseClient()
+  const today = new Date().toISOString().slice(0, 10)
+  const { data } = await supabase
+    .from('ndis_price_guide')
+    .select('*')
+    .in('support_item_number', supportItemNumbers)
+    .or(`effective_to.is.null,effective_to.gte.${today}`)
+    .order('effective_from', { ascending: false })
+  return (data ?? []) as unknown as NdisPriceGuideRow[]
+}
+
 export async function getClientSessionNotes(practitionerId: string, clientId: string): Promise<ClientSessionNote[]> {
   const supabase = await createServerSupabaseClient()
   const { data, error } = await supabase
@@ -482,7 +505,7 @@ export async function getClientSessionNotes(practitionerId: string, clientId: st
   return rows
     .filter((s) => {
       if (!s.notes) return false
-      try { const p = JSON.parse(s.notes); return !!p?.__ndis_v1 } catch { return false }
+      try { const p = JSON.parse(s.notes); return !!p?.__ndis_v1 || !!p?.__therapy_v1 } catch { return false }
     })
     .map((s) => ({
       id: s.id,

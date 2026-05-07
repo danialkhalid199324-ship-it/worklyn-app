@@ -3,11 +3,12 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Button from '@/components/ui/Button'
-import NDISNotesFields, {
-  type NDISNotes,
-  parseNDISNotes,
-  computeNotesWarnings,
-} from './NDISNotesFields'
+import TherapyNotesFields, {
+  type TherapyNotes,
+  EMPTY_THERAPY_NOTES,
+  parseTherapyNotes,
+  computeTherapyWarnings,
+} from './TherapyNotesFields'
 import { completeSession, createSession } from '@/app/actions/sessions'
 import type { SessionWithClient } from '@/lib/db'
 
@@ -31,15 +32,6 @@ interface Props {
   onCancel: () => void
 }
 
-const EMPTY_NDIS: NDISNotes = {
-  participant_presentation: '',
-  supports_delivered: '',
-  participant_response: '',
-  progress_toward_goals: '',
-  risks_incidents: '',
-  next_steps: '',
-}
-
 export default function CompleteSessionNotesModal({
   session,
   newSessionData,
@@ -50,13 +42,15 @@ export default function CompleteSessionNotesModal({
 }: Props) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const [ndisNotes, setNdisNotes] = useState<NDISNotes>(
-    () => parseNDISNotes(session?.notes ?? null) ?? { ...EMPTY_NDIS },
+
+  const [therapyNotes, setTherapyNotes] = useState<TherapyNotes>(
+    () => parseTherapyNotes(session?.notes ?? null) ?? { ...EMPTY_THERAPY_NOTES },
   )
   const [saveAttempted, setSaveAttempted] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
+  const [invoiceWarning, setInvoiceWarning] = useState<string | null>(null)
 
-  const warnings = saveAttempted ? computeNotesWarnings(ndisNotes) : []
+  const warnings = saveAttempted ? computeTherapyWarnings(therapyNotes) : []
 
   const serviceDate = session?.service_date ?? newSessionData?.service_date ?? ''
   const startTime = (session?.start_time ?? newSessionData?.start_time ?? '').slice(0, 5)
@@ -71,14 +65,14 @@ export default function CompleteSessionNotesModal({
 
   function handleSave() {
     setSaveAttempted(true)
-    const currentWarnings = computeNotesWarnings(ndisNotes)
+    const currentWarnings = computeTherapyWarnings(therapyNotes)
     if (currentWarnings.length > 0) return
 
     setServerError(null)
-    const notesJson = JSON.stringify({ __ndis_v1: true, ...ndisNotes })
+    const notesJson = JSON.stringify({ __therapy_v1: true, ...therapyNotes })
 
     startTransition(async () => {
-      let result: { success?: boolean; error?: string }
+      let result: { success?: boolean; error?: string; invoiceWarning?: string }
 
       if (session) {
         result = await completeSession(session.id, notesJson)
@@ -104,14 +98,18 @@ export default function CompleteSessionNotesModal({
         setServerError(result.error)
       } else {
         router.refresh()
-        onSuccess()
+        if ('invoiceWarning' in result && result.invoiceWarning) {
+          setInvoiceWarning(result.invoiceWarning)
+        } else {
+          onSuccess()
+        }
       }
     })
   }
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl bg-white shadow-xl">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-6 py-4">
@@ -174,13 +172,11 @@ export default function CompleteSessionNotesModal({
             </div>
           </div>
 
-          {/* NDIS notes — suppress internal session reference (already shown above) */}
-          <NDISNotesFields
-            notes={ndisNotes}
-            onChange={setNdisNotes}
+          {/* Therapy note fields */}
+          <TherapyNotesFields
+            notes={therapyNotes}
+            onChange={setTherapyNotes}
             warnings={warnings}
-            meta={{ date: '', startTime: '', endTime: '', duration: '', serviceName: '' }}
-            disabled={false}
           />
 
           {serverError && (
@@ -188,15 +184,26 @@ export default function CompleteSessionNotesModal({
               {serverError}
             </p>
           )}
-
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-gray-100 px-6 py-4">
-          <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-          <Button type="button" loading={pending} onClick={handleSave}>
-            Complete Session
-          </Button>
+        <div className="shrink-0 border-t border-gray-100 px-6 py-4">
+          {invoiceWarning ? (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-sm font-medium text-amber-800">Session completed</p>
+              <p className="mt-0.5 text-xs text-amber-700">{invoiceWarning}</p>
+              <div className="mt-3 flex justify-end">
+                <Button type="button" onClick={onSuccess}>Close</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-end gap-3">
+              <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
+              <Button type="button" loading={pending} onClick={handleSave}>
+                Complete Session
+              </Button>
+            </div>
+          )}
         </div>
 
       </div>

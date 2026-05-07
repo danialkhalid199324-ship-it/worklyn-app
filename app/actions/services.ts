@@ -132,6 +132,7 @@ export async function upsertService(
     name,
     category: (formData.get('category') as string)?.trim() || null,
     ndis_line_item: (formData.get('ndis_line_item') as string)?.trim() || null,
+    support_item_number: (formData.get('support_item_number') as string)?.trim() || null,
     default_rate: defaultRate,
     weekday_rate: weekdayRate,
     saturday_rate: saturdayRate,

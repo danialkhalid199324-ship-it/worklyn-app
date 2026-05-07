@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Card from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import InvoiceModal from './InvoiceModal'
+import { deleteInvoice } from '@/app/actions/invoices'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import { recipientLabel } from '@/lib/invoice-routing'
 import type { ClientRow, InvoiceRow, InvoiceStatus, OrgSettingsRow } from '@/types/database'
@@ -44,7 +46,19 @@ export default function InvoicesClient({ invoices, clients, nextInvoiceNumber, o
   const [showModal, setShowModal] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | 'all'>('all')
+  const [confirmDelete, setConfirmDelete] = useState<InvoiceWithClient | null>(null)
+  const [deletePending, startDeleteTransition] = useTransition()
   const router = useRouter()
+
+  function handleDelete(inv: InvoiceWithClient) {
+    startDeleteTransition(async () => {
+      const result = await deleteInvoice(inv.id)
+      if (!result?.error) {
+        setConfirmDelete(null)
+        router.refresh()
+      }
+    })
+  }
 
   const fmt = (cents: number) => formatCurrency(cents, 'AUD')
 
@@ -142,6 +156,7 @@ export default function InvoicesClient({ invoices, clients, nextInvoiceNumber, o
                   {h}
                 </th>
               ))}
+              <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
@@ -168,7 +183,11 @@ export default function InvoicesClient({ invoices, clients, nextInvoiceNumber, o
                 return (
                   <tr
                     key={inv.id}
-                    onClick={() => router.push(`/dashboard/invoices/${inv.id}`)}
+                    onClick={() => {
+                      if (!inv.id) { console.error('Invoice row missing id:', inv); return }
+                      console.log('Navigating to invoice:', inv.id)
+                      router.push(`/dashboard/invoices/${inv.id}`)
+                    }}
                     className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50/50"
                   >
                     <td className="px-4 py-3 font-medium text-gray-900">{inv.invoice_number}</td>
@@ -188,6 +207,19 @@ export default function InvoicesClient({ invoices, clients, nextInvoiceNumber, o
                     <td className="px-4 py-3 text-gray-500">
                       {inv.due_at ? formatDate(inv.due_at) : '—'}
                     </td>
+                    <td className="px-4 py-3">
+                      {inv.status === 'draft' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setConfirmDelete(inv) }}
+                          title="Delete invoice"
+                          className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4h6v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 )
               })
@@ -202,6 +234,17 @@ export default function InvoicesClient({ invoices, clients, nextInvoiceNumber, o
           nextInvoiceNumber={nextInvoiceNumber}
           orgSettings={orgSettings}
           onClose={() => setShowModal(false)}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete invoice?"
+          message={`Are you sure you want to delete invoice ${confirmDelete.invoice_number}? Linked sessions will be unlinked but not deleted. This action cannot be undone.`}
+          confirmLabel="Delete invoice"
+          loading={deletePending}
+          onConfirm={() => handleDelete(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
         />
       )}
     </div>

@@ -101,8 +101,9 @@ export interface ServiceRow {
   // NDIS catalogue fields
   category: string | null
   ndis_line_item: string | null
-  default_rate: number | null       // fallback rate (dollars per hour/session)
-  weekday_rate: number | null       // Mon–Fri rate
+  support_item_number: string | null  // soft FK → ndis_price_guide.support_item_number
+  default_rate: number | null         // fallback rate (dollars per hour/session)
+  weekday_rate: number | null         // Mon–Fri rate
   saturday_rate: number | null
   sunday_rate: number | null
   public_holiday_rate: number | null
@@ -117,6 +118,21 @@ export interface ServiceRow {
   is_active: boolean
   created_at: string
   updated_at: string
+}
+
+export interface NdisPriceGuideRow {
+  id: string
+  support_item_number: string
+  support_item_name: string
+  support_category: string
+  unit: string
+  weekday_rate: number | null
+  saturday_rate: number | null
+  sunday_rate: number | null
+  public_holiday_rate: number | null
+  effective_from: string   // YYYY-MM-DD
+  effective_to: string | null
+  source_version: string
 }
 
 export interface AvailabilityRuleRow {
@@ -284,6 +300,18 @@ export type InsertSessionNote = Omit<SessionNoteRow, 'id' | 'created_at' | 'upda
 export type InsertReport = Omit<ReportRow, 'id' | 'created_at'> & { data?: Json }
 export type InsertInvoice = Omit<InvoiceRow, 'id' | 'created_at' | 'updated_at'>
 export type InsertInvoiceItem = Omit<InvoiceItemRow, 'id' | 'total_cents' | 'created_at'>
+
+export interface InvoiceAuditLogRow {
+  id: string
+  invoice_id: string
+  practitioner_id: string
+  edited_by: string
+  previous_values: Record<string, unknown>
+  updated_values: Record<string, unknown>
+  reason: string | null
+  edited_at: string
+}
+export type InsertInvoiceAuditLog = Omit<InvoiceAuditLogRow, 'id' | 'edited_at'>
 export type InsertOrgSettings = Omit<OrgSettingsRow, 'id' | 'created_at' | 'updated_at'>
 export type InsertSession = Omit<SessionRow, 'id' | 'created_at' | 'updated_at'>
 export type UpdateSession = Partial<Omit<SessionRow, 'id' | 'practitioner_id' | 'client_id' | 'created_at' | 'updated_at'>>
@@ -292,6 +320,7 @@ export type InsertCatalogueService = {
   name: string
   category?: string | null
   ndis_line_item?: string | null
+  support_item_number?: string | null
   default_rate?: number | null
   unit_type?: UnitType
   gst_applicable?: boolean
@@ -302,6 +331,9 @@ export type InsertCatalogueService = {
   color?: string | null
   is_active?: boolean
 }
+
+export type InsertNdisPriceGuide = Omit<NdisPriceGuideRow, 'id'>
+export type UpdateNdisPriceGuide = Partial<Omit<NdisPriceGuideRow, 'id'>>
 export type InsertSessionNotification = Omit<SessionNotificationRow, 'id' | 'created_at'>
 export type UpdateSessionNotification = Partial<Pick<SessionNotificationRow, 'status' | 'error_message' | 'sent_at'>>
 
@@ -360,6 +392,12 @@ export interface Database {
             referencedColumns: ['id']
           }
         ]
+      }
+      ndis_price_guide: {
+        Row: NdisPriceGuideRow
+        Insert: InsertNdisPriceGuide
+        Update: UpdateNdisPriceGuide
+        Relationships: []
       }
       availability_rules: {
         Row: AvailabilityRuleRow
@@ -473,6 +511,20 @@ export interface Database {
         Relationships: [
           {
             foreignKeyName: 'invoice_items_invoice_id_fkey'
+            columns: ['invoice_id']
+            isOneToOne: false
+            referencedRelation: 'invoices'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      invoice_audit_log: {
+        Row: InvoiceAuditLogRow
+        Insert: InsertInvoiceAuditLog
+        Update: Partial<Omit<InvoiceAuditLogRow, 'id' | 'invoice_id' | 'practitioner_id' | 'edited_at'>>
+        Relationships: [
+          {
+            foreignKeyName: 'invoice_audit_log_invoice_id_fkey'
             columns: ['invoice_id']
             isOneToOne: false
             referencedRelation: 'invoices'

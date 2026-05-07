@@ -98,6 +98,23 @@ function ServiceForm({ service, onClose, onSaved }: ServiceFormProps) {
             </select>
           </div>
 
+          {/* NDIS Price Guide link */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              NDIS Support Item Number
+              <span className="ml-1.5 text-xs font-normal text-gray-400">(links to official price guide)</span>
+            </label>
+            <input
+              name="support_item_number"
+              defaultValue={service?.support_item_number ?? ''}
+              placeholder="e.g. 15_056_0128_1_3"
+              className={INPUT}
+            />
+            <p className="mt-0.5 text-xs text-gray-400">
+              When set, sessions auto-fill the NDIS line item and rate from the Support Catalogue.
+            </p>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             {/* NDIS line item */}
             <div>
