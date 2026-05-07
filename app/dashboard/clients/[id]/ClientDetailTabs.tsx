@@ -10,8 +10,9 @@ import ClientModal from '../ClientModal'
 import { updateClient, toggleClientStatus } from '@/app/actions/clients'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import { resolveInvoiceRecipient, recipientLabel } from '@/lib/invoice-routing'
-import type { ClientRow, InvoiceRow } from '@/types/database'
+import type { ClientRow, InvoiceRow, FundingAllocationRow } from '@/types/database'
 import type { ClientEventRow, ClientSessionNote } from '@/lib/db'
+import FundingTab from './FundingTab'
 import { parseNDISNotes } from '@/app/dashboard/sessions/NDISNotesFields'
 import type { NDISNotes } from '@/app/dashboard/sessions/NDISNotesFields'
 import { parseTherapyNotes } from '@/app/dashboard/sessions/TherapyNotesFields'
@@ -24,12 +25,14 @@ interface Props {
   events: ClientEventRow[]
   invoices: InvoiceRow[]
   sessionNotes: ClientSessionNote[]
+  allocations: FundingAllocationRow[]
 }
 
-type Tab = 'profile' | 'appointments' | 'reports' | 'invoices'
+type Tab = 'profile' | 'funding' | 'appointments' | 'reports' | 'invoices'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'profile', label: 'Profile' },
+  { id: 'funding', label: 'Funding' },
   { id: 'appointments', label: 'Appointments' },
   { id: 'reports', label: 'Session Notes' },
   { id: 'invoices', label: 'Invoices' },
@@ -56,6 +59,7 @@ export default function ClientDetailTabs({
   events,
   invoices,
   sessionNotes,
+  allocations,
 }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('profile')
   const [showEditModal, setShowEditModal] = useState(false)
@@ -133,6 +137,11 @@ export default function ClientDetailTabs({
               ].join(' ')}
             >
               {tab.label}
+              {tab.id === 'funding' && allocations.some(a => a.is_active) && (
+                <span className="ml-1.5 rounded-full bg-green-100 px-1.5 py-0.5 text-xs text-green-700">
+                  active
+                </span>
+              )}
               {tab.id === 'appointments' && events.length > 0 && (
                 <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
                   {events.length}
@@ -155,6 +164,7 @@ export default function ClientDetailTabs({
 
       {/* Tab panels */}
       {activeTab === 'profile' && <ProfileTab client={client} />}
+      {activeTab === 'funding' && <FundingTab allocations={allocations} client={client} />}
       {activeTab === 'appointments' && <AppointmentsTab events={events} />}
       {activeTab === 'reports' && <ReportsTab notes={sessionNotes} />}
       {activeTab === 'invoices' && <InvoicesTab invoices={invoices} client={client} />}

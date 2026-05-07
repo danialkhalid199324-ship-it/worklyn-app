@@ -287,6 +287,32 @@ export interface OrgSettingsRow {
 }
 
 // ---------------------------------------------------------------------------
+// Funding allocation
+// ---------------------------------------------------------------------------
+
+export interface FundingAllocationRow {
+  id: string
+  practitioner_id: string
+  client_id: string
+  plan_name: string
+  funding_type: string
+  management_type: string | null
+  support_category: string | null
+  service_category: string | null
+  ndis_line_item: string | null
+  plan_start_date: string         // YYYY-MM-DD
+  plan_end_date: string           // YYYY-MM-DD
+  allocated_amount: number        // cents
+  used_amount: number             // cents; recomputed from invoices/sessions — never edit directly
+  remaining_amount: number        // cents; = allocated - used
+  utilisation_percentage: number  // 0.00–100.00+
+  is_active: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// ---------------------------------------------------------------------------
 // Insert / Update types
 // ---------------------------------------------------------------------------
 export type InsertUser = Omit<UserRow, 'created_at' | 'updated_at'>
@@ -313,6 +339,8 @@ export interface InvoiceAuditLogRow {
 }
 export type InsertInvoiceAuditLog = Omit<InvoiceAuditLogRow, 'id' | 'edited_at'>
 export type InsertOrgSettings = Omit<OrgSettingsRow, 'id' | 'created_at' | 'updated_at'>
+export type InsertFundingAllocation = Omit<FundingAllocationRow, 'id' | 'created_at' | 'updated_at'>
+export type UpdateFundingAllocation = Partial<Omit<FundingAllocationRow, 'id' | 'practitioner_id' | 'client_id' | 'created_at' | 'updated_at'>>
 export type InsertSession = Omit<SessionRow, 'id' | 'created_at' | 'updated_at'>
 export type UpdateSession = Partial<Omit<SessionRow, 'id' | 'practitioner_id' | 'client_id' | 'created_at' | 'updated_at'>>
 export type InsertCatalogueService = {
@@ -591,6 +619,27 @@ export interface Database {
             columns: ['session_id']
             isOneToOne: false
             referencedRelation: 'sessions'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      client_funding_allocations: {
+        Row: FundingAllocationRow
+        Insert: InsertFundingAllocation
+        Update: UpdateFundingAllocation
+        Relationships: [
+          {
+            foreignKeyName: 'client_funding_allocations_practitioner_id_fkey'
+            columns: ['practitioner_id']
+            isOneToOne: false
+            referencedRelation: 'practitioners'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'client_funding_allocations_client_id_fkey'
+            columns: ['client_id']
+            isOneToOne: false
+            referencedRelation: 'clients'
             referencedColumns: ['id']
           }
         ]

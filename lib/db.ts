@@ -11,6 +11,7 @@ import type {
   OrgSettingsRow,
   SessionNotificationRow,
   NdisPriceGuideRow,
+  FundingAllocationRow,
 } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -518,4 +519,19 @@ export async function getClientSessionNotes(practitionerId: string, clientId: st
       invoice_id: s.invoice_id,
       invoice_number: s.invoices?.invoice_number ?? null,
     }))
+}
+
+export async function getClientFundingAllocations(
+  practitionerId: string,
+  clientId: string,
+): Promise<FundingAllocationRow[]> {
+  const supabase = await createServerSupabaseClient()
+  const { data, error } = await supabase
+    .from('client_funding_allocations')
+    .select('*')
+    .eq('practitioner_id', practitionerId)
+    .eq('client_id', clientId)
+    .order('plan_start_date', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as unknown as FundingAllocationRow[]
 }

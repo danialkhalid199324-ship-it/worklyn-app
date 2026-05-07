@@ -6,6 +6,7 @@ import { requireAuth } from '@/lib/auth'
 import { getPractitionerByUserId, getClientById } from '@/lib/db'
 import { resolveInvoiceRecipient } from '@/lib/invoice-routing'
 import { sendSessionNotification } from '@/lib/session-notifications'
+import { recalculateAllocationForClient } from '@/app/actions/funding'
 import type { SessionStatus, SessionRow } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -160,8 +161,6 @@ async function autoCreateDraftInvoice(
   practitioner: Practitioner,
   sessionId: string,
 ): Promise<string | null> {
-  console.log('[autoCreateDraftInvoice] START — sessionId:', sessionId, 'practitionerId:', practitioner.id)
-
   // Fetch the session without filtering on invoice_id so we can check it explicitly.
   const { data: raw, error: fetchErr } = await supabase
     .from('sessions')
@@ -185,29 +184,23 @@ async function autoCreateDraftInvoice(
   type SessionWithService = SessionRow & { services: { name: string } | null }
   const session = raw as unknown as SessionWithService
 
-  console.log('[autoCreateDraftInvoice] STEP 1 OK — session fetched. client_id:', session.client_id, 'service_id:', session.service_id, 'invoice_id:', session.invoice_id, 'status:', session.status, 'rate:', session.rate, 'duration_minutes:', session.duration_minutes)
-
   // Idempotency: session is already linked to an invoice
   if (session.invoice_id) {
-    console.log('[autoCreateDraftInvoice] SKIPPED — session already has invoice_id:', session.invoice_id)
     return null
   }
 
   let client
   try {
     client = await getClientById(practitioner.id, session.client_id)
-    console.log('[autoCreateDraftInvoice] STEP 2 OK — client fetched. funding_type:', client.funding_type, 'ndis_management_type:', client.ndis_management_type)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[autoCreateDraftInvoice] STEP 2 FAILED — client fetch error:', msg)
     return `Client fetch failed: ${msg}`
   }
   const recipient = resolveInvoiceRecipient(client)
-  console.log('[autoCreateDraftInvoice] recipient resolved:', JSON.stringify(recipient))
 
   // Invoice number — scan existing numbers and increment from max (safe against deletes/races)
   const invoiceNumber = await generateNextInvoiceNumber(supabase, practitioner.id)
-  console.log('[autoCreateDraftInvoice] STEP 3 — invoice number will be:', invoiceNumber)
 
   const hours = session.duration_minutes / 60
   const amountCents = Math.round(hours * session.rate * 100)
@@ -241,7 +234,6 @@ async function autoCreateDraftInvoice(
     due_at: due.toISOString().slice(0, 10),
     ...recipient,
   }
-  console.log('[autoCreateDraftInvoice] STEP 4 — inserting invoice with payload:', JSON.stringify(invoicePayload))
 
   const { data: invoice, error: invoiceErr } = await supabase
     .from('invoices')
@@ -253,7 +245,6 @@ async function autoCreateDraftInvoice(
     console.error('[autoCreateDraftInvoice] STEP 4 FAILED — invoice insert error:', JSON.stringify(invoiceErr))
     return `Invoice insert failed: ${invoiceErr?.message ?? 'unknown error'}`
   }
-  console.log('[autoCreateDraftInvoice] STEP 4 OK — invoice created with id:', invoice.id)
 
   const lineItemPayload = {
     invoice_id: invoice.id,
@@ -261,7 +252,6 @@ async function autoCreateDraftInvoice(
     quantity: parseFloat(hours.toFixed(4)),
     unit_price_cents: Math.round(session.rate * 100),
   }
-  console.log('[autoCreateDraftInvoice] STEP 5 — inserting line item:', JSON.stringify(lineItemPayload))
 
   const { error: itemErr } = await supabase.from('invoice_items').insert(lineItemPayload)
 
@@ -270,10 +260,8 @@ async function autoCreateDraftInvoice(
     await supabase.from('invoices').delete().eq('id', invoice.id)
     return `Invoice line item failed: ${itemErr.message}`
   }
-  console.log('[autoCreateDraftInvoice] STEP 5 OK — line item inserted')
 
   // Link session → invoice; idempotency guard via .is('invoice_id', null)
-  console.log('[autoCreateDraftInvoice] STEP 6 — updating session invoice_id to:', invoice.id, 'for session:', session.id)
   const { data: linked, error: linkErr } = await supabase
     .from('sessions')
     .update({ invoice_id: invoice.id })
@@ -287,16 +275,13 @@ async function autoCreateDraftInvoice(
     await supabase.from('invoices').delete().eq('id', invoice.id)
     return `Session link failed: ${linkErr.message}`
   }
-  console.log('[autoCreateDraftInvoice] STEP 6 result — linked rows:', JSON.stringify(linked))
 
   if (!linked || linked.length === 0) {
     // 0 rows updated: session was concurrently invoiced — delete duplicate and treat as success
-    console.warn('[autoCreateDraftInvoice] STEP 6 — 0 rows updated on session link. Deleting orphan invoice', invoice.id, '— treating as concurrent-invoice success.')
+    console.warn('[autoCreateDraftInvoice] concurrent invoice detected — deleting orphan invoice', invoice.id)
     await supabase.from('invoices').delete().eq('id', invoice.id)
     return null
   }
-
-  console.log('[autoCreateDraftInvoice] STEP 6 OK — session linked to invoice. Rows updated:', linked.length)
 
   // Set audit lock metadata — non-critical, requires DB columns to exist
   const { error: lockErr } = await supabase
@@ -309,12 +294,9 @@ async function autoCreateDraftInvoice(
     .eq('practitioner_id', practitioner.id)
 
   if (lockErr) {
-    console.warn('[autoCreateDraftInvoice] STEP 7 — audit lock update failed (non-critical):', lockErr.message)
-  } else {
-    console.log('[autoCreateDraftInvoice] STEP 7 OK — audit lock set')
+    console.warn('[autoCreateDraftInvoice] audit lock update failed (non-critical):', lockErr.message)
   }
 
-  console.log('[autoCreateDraftInvoice] COMPLETE — invoice', invoice.id, 'linked to session', session.id)
   return null
 }
 
@@ -332,7 +314,6 @@ export async function createSession(formData: FormData) {
   const durationMinutes = parseInt(formData.get('duration_minutes') as string)
   const rate = parseFloat(formData.get('rate') as string)
   const incomingStatus = formData.get('status') as string
-  console.log('[createSession] CALLED — clientId:', clientId, 'serviceDate:', serviceDate, 'status:', incomingStatus, 'practitionerId:', practitioner.id)
 
   if (!clientId || !serviceDate) return { error: 'Client and date are required.' }
   if (!durationMinutes || durationMinutes <= 0) return { error: 'Duration must be at least 1 minute.' }
@@ -382,9 +363,7 @@ export async function createSession(formData: FormData) {
   if (error) return { error: error.message }
 
   // Auto-create a draft invoice when the session is created as completed
-  console.log('[createSession] session inserted — id:', newSession?.id, 'status:', sessionStatus)
   if (sessionStatus === 'completed' && newSession) {
-    console.log('[createSession] triggering autoCreateDraftInvoice for session:', newSession.id)
     let autoInvoiceErr: string | null = null
     try {
       autoInvoiceErr = await autoCreateDraftInvoice(supabase, practitioner, newSession.id)
@@ -392,7 +371,6 @@ export async function createSession(formData: FormData) {
       autoInvoiceErr = err instanceof Error ? err.message : String(err)
       console.error('[createSession] auto-invoice threw:', autoInvoiceErr)
     }
-    console.log('[createSession] autoCreateDraftInvoice returned:', autoInvoiceErr)
     revalidatePath('/dashboard/invoices')
     if (autoInvoiceErr) {
       revalidatePath('/dashboard/sessions')
@@ -401,6 +379,12 @@ export async function createSession(formData: FormData) {
         success: true as const,
         invoiceWarning: `Session created, but the invoice could not be created automatically. DB error: ${autoInvoiceErr}`,
       }
+    }
+    // Recalculate funding allocation usage — non-blocking
+    try {
+      await recalculateAllocationForClient(practitioner.id, clientId)
+    } catch (err) {
+      console.warn('[createSession] allocation recalculation failed (non-critical):', String(err))
     }
   }
 
@@ -706,8 +690,6 @@ export async function completeSession(sessionId: string, notesJson: string) {
   const practitioner = await getPractitionerByUserId(user.id)
   const supabase = await createServerSupabaseClient()
 
-  console.log('[completeSession] CALLED — sessionId:', sessionId, 'practitionerId:', practitioner.id)
-
   // Validate notes server-side (defence-in-depth)
   const notesError = validateCompletionNotes(notesJson)
   if (notesError) return { error: notesError }
@@ -732,7 +714,6 @@ export async function completeSession(sessionId: string, notesJson: string) {
 
   if (error) return { error: error.message }
 
-  console.log('[completeSession] session status updated — now calling autoCreateDraftInvoice for:', sessionId)
   let autoInvoiceErr: string | null = null
   try {
     autoInvoiceErr = await autoCreateDraftInvoice(supabase, practitioner, sessionId)
@@ -740,7 +721,15 @@ export async function completeSession(sessionId: string, notesJson: string) {
     autoInvoiceErr = err instanceof Error ? err.message : String(err)
     console.error('[completeSession] auto-invoice threw:', autoInvoiceErr)
   }
-  console.log('[completeSession] autoCreateDraftInvoice returned:', autoInvoiceErr)
+
+  // Recalculate funding allocation usage — non-blocking, does not affect session completion
+  if (!autoInvoiceErr) {
+    try {
+      await recalculateAllocationForClient(practitioner.id, existing.client_id)
+    } catch (err) {
+      console.warn('[completeSession] allocation recalculation failed (non-critical):', String(err))
+    }
+  }
 
   revalidatePath('/dashboard/sessions')
   revalidatePath('/dashboard/invoices')
