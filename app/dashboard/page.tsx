@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import type { ReactNode } from 'react'
 import Card from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import { requireAuth } from '@/lib/auth'
@@ -23,252 +24,326 @@ function statusColor(status: string): 'gray' | 'green' | 'amber' | 'red' | 'blue
   }
 }
 
+function formatUpcomingDate(dateStr: string, tomorrowStr: string): string {
+  if (dateStr === tomorrowStr) return 'Tomorrow'
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString('en-AU', {
+    weekday: 'short', day: 'numeric', month: 'short',
+  })
+}
+
+function daysUntil(dateStr: string): number {
+  const target = new Date(`${dateStr}T00:00:00`)
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return Math.round((target.getTime() - d.getTime()) / 86400000)
+}
+
 export default async function DashboardPage() {
   const user = await requireAuth()
   const practitioner = await getPractitionerByUserId(user.id)
   const supabase = await createServerSupabaseClient()
   const pid = practitioner.id
 
-  const today = new Date().toISOString().slice(0, 10)
   const now = new Date()
+  const today = now.toISOString().slice(0, 10)
   const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1)
+  const tomorrowStr = tomorrow.toISOString().slice(0, 10)
+
+  const sevenOut = new Date(now); sevenOut.setDate(sevenOut.getDate() + 7)
+  const sevenOutStr = sevenOut.toISOString().slice(0, 10)
+
+  const thirtyOut = new Date(now); thirtyOut.setDate(thirtyOut.getDate() + 30)
+  const thirtyOutStr = thirtyOut.toISOString().slice(0, 10)
+
+  const ninetyAgo = new Date(now); ninetyAgo.setDate(ninetyAgo.getDate() - 90)
+  const ninetyAgoStr = ninetyAgo.toISOString().slice(0, 10)
 
   const [
     todayRes,
     activeClientsRes,
     upcomingRes,
-    recentClientsRes,
-    outstandingAmountRes,
+    outstandingAmtRes,
     outstandingListRes,
     revenueRes,
+    overdueCountRes,
+    draftCountRes,
+    missingNotesRes,
+    fundingRes,
     availabilityRes,
     servicesRes,
     sessionsExistRes,
   ] = await Promise.all([
-    // today's session count (not cancelled)
-    supabase.from('sessions').select('id', { count: 'exact', head: true })
-      .eq('practitioner_id', pid).eq('service_date', today).neq('status', 'cancelled'),
+    // Today's sessions (list, all non-cancelled)
+    supabase.from('sessions')
+      .select('id, service_date, start_time, end_time, status, client_id, clients(id, first_name, last_name), services(name)')
+      .eq('practitioner_id', pid).eq('service_date', today).neq('status', 'cancelled')
+      .order('start_time', { nullsFirst: false }),
 
-    // active client count
+    // Active client count
     supabase.from('clients').select('id', { count: 'exact', head: true })
       .eq('practitioner_id', pid).eq('is_active', true),
 
-    // upcoming sessions (next 5, scheduled only)
+    // Upcoming sessions (tomorrow → +7 days, scheduled only)
     supabase.from('sessions')
-      .select('id, service_date, start_time, end_time, status, clients(first_name, last_name), services(name)')
-      .eq('practitioner_id', pid).eq('status', 'scheduled').gte('service_date', today)
-      .order('service_date').order('start_time', { nullsFirst: false }).limit(5),
+      .select('id, service_date, start_time, end_time, status, client_id, clients(id, first_name, last_name), services(name)')
+      .eq('practitioner_id', pid).eq('status', 'scheduled')
+      .gte('service_date', tomorrowStr).lte('service_date', sevenOutStr)
+      .order('service_date').order('start_time', { nullsFirst: false }).limit(8),
 
-    // recent clients (latest 5)
-    supabase.from('clients')
-      .select('id, first_name, last_name, is_active, created_at')
-      .eq('practitioner_id', pid).order('created_at', { ascending: false }).limit(5),
-
-    // outstanding invoices amounts only (for sum)
-    supabase.from('invoices').select('total_cents')
+    // Outstanding invoice amounts + status (for totals and breakdown counts)
+    supabase.from('invoices').select('total_cents, status')
       .eq('practitioner_id', pid).in('status', ['draft', 'sent', 'overdue']),
 
-    // outstanding invoices list (latest 5 for display)
+    // Outstanding invoices list for display
     supabase.from('invoices')
-      .select('id, invoice_number, total_cents, status, clients(first_name, last_name)')
+      .select('id, invoice_number, total_cents, status, due_at, clients(id, first_name, last_name)')
       .eq('practitioner_id', pid).in('status', ['draft', 'sent', 'overdue'])
-      .order('created_at', { ascending: false }).limit(5),
+      .order('created_at', { ascending: false }).limit(8),
 
-    // paid this month
+    // Revenue this month
     supabase.from('invoices').select('total_cents')
       .eq('practitioner_id', pid).eq('status', 'paid').gte('paid_at', monthStart),
 
-    // checklist: availability exists
-    supabase.from('availability_rules').select('id', { count: 'exact', head: true })
-      .eq('practitioner_id', pid),
+    // Overdue invoice count
+    supabase.from('invoices').select('id', { count: 'exact', head: true })
+      .eq('practitioner_id', pid).eq('status', 'overdue'),
 
-    // checklist: service exists
-    supabase.from('services').select('id', { count: 'exact', head: true })
-      .eq('practitioner_id', pid),
+    // Draft invoice count
+    supabase.from('invoices').select('id', { count: 'exact', head: true })
+      .eq('practitioner_id', pid).eq('status', 'draft'),
 
-    // checklist: session exists
+    // Completed sessions missing notes (last 90 days)
     supabase.from('sessions').select('id', { count: 'exact', head: true })
-      .eq('practitioner_id', pid),
+      .eq('practitioner_id', pid).eq('status', 'completed')
+      .is('notes', null).gte('service_date', ninetyAgoStr),
+
+    // Active funding allocations for alerts
+    supabase.from('client_funding_allocations')
+      .select('id, plan_name, plan_end_date, allocated_amount, remaining_amount, utilisation_percentage, client_id, clients(id, first_name, last_name)')
+      .eq('practitioner_id', pid).eq('is_active', true)
+      .order('plan_end_date'),
+
+    // Checklist
+    supabase.from('availability_rules').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
+    supabase.from('services').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
+    supabase.from('sessions').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
   ])
 
-  // Derive metrics
-  const todayCount       = todayRes.count ?? 0
-  const activeClients    = activeClientsRes.count ?? 0
-  const pendingCents     = (outstandingAmountRes.data ?? []).reduce((s, r) => s + (r as { total_cents: number }).total_cents, 0)
-  const revenueCents     = (revenueRes.data ?? []).reduce((s, r) => s + (r as { total_cents: number }).total_cents, 0)
+  // ---------------------------------------------------------------------------
+  // Types
+  // ---------------------------------------------------------------------------
 
-  // Checklist
-  const hasClient       = (recentClientsRes.data?.length ?? 0) > 0
+  type SessionItem = {
+    id: string; service_date: string; start_time: string | null; end_time: string | null
+    status: string; client_id: string
+    clients: { id: string; first_name: string; last_name: string } | null
+    services: { name: string } | null
+  }
+
+  type InvoiceItem = {
+    id: string; invoice_number: string; total_cents: number; status: string; due_at: string | null
+    clients: { id: string; first_name: string; last_name: string } | null
+  }
+
+  type FundingItem = {
+    id: string; plan_name: string; plan_end_date: string
+    allocated_amount: number; remaining_amount: number; utilisation_percentage: number
+    client_id: string
+    clients: { id: string; first_name: string; last_name: string } | null
+  }
+
+  // ---------------------------------------------------------------------------
+  // Derived values
+  // ---------------------------------------------------------------------------
+
+  const todaySessions   = (todayRes.data ?? []) as unknown as SessionItem[]
+  const upcomingSessions = (upcomingRes.data ?? []) as unknown as SessionItem[]
+
+  const outstandingData  = (outstandingAmtRes.data ?? []) as { total_cents: number; status: string }[]
+  const pendingCents     = outstandingData.reduce((s, r) => s + r.total_cents, 0)
+  const sentCount        = outstandingData.filter(r => r.status === 'sent').length
+  const revenueCents     = (revenueRes.data ?? []).reduce((s, r) => s + (r as { total_cents: number }).total_cents, 0)
+  const revenuePaidCount = (revenueRes.data ?? []).length
+
+  const activeClients    = activeClientsRes.count ?? 0
+  const overdueCount     = overdueCountRes.count ?? 0
+  const draftCount       = draftCountRes.count ?? 0
+  const missingNotesCount = missingNotesRes.count ?? 0
+
+  const statusPriority: Record<string, number> = { overdue: 0, sent: 1, draft: 2 }
+  const outstandingInvoices = ((outstandingListRes.data ?? []) as unknown as InvoiceItem[])
+    .sort((a, b) => (statusPriority[a.status] ?? 3) - (statusPriority[b.status] ?? 3))
+
+  const allActivePlans = (fundingRes.data ?? []) as unknown as FundingItem[]
+  const fundingAlerts  = allActivePlans
+    .filter(p => Number(p.utilisation_percentage) >= 80 || p.plan_end_date <= thirtyOutStr)
+    .slice(0, 5)
+
+  const clientsWithFunding   = new Set(allActivePlans.map(p => p.client_id)).size
+  const clientsMissingFunding = Math.max(0, activeClients - clientsWithFunding)
+
+  const hasAttention = overdueCount > 0 || missingNotesCount > 0 || draftCount > 0 || fundingAlerts.length > 0 || clientsMissingFunding > 0
+
+  const hasClient       = activeClients > 0
   const hasAvailability = (availabilityRes.count ?? 0) > 0
   const hasService      = (servicesRes.count ?? 0) > 0
   const hasSession      = (sessionsExistRes.count ?? 0) > 0
+  const checklistDone   = hasClient && hasAvailability && hasService && hasSession
 
-  // Typed shapes for upcoming sessions
-  type UpcomingSession = {
-    id: string
-    service_date: string
-    start_time: string | null
-    end_time: string | null
-    status: string
-    clients: { first_name: string; last_name: string } | null
-    services: { name: string } | null
-  }
-  const upcomingSessions = (upcomingRes.data ?? []) as unknown as UpcomingSession[]
-
-  // Typed shapes for recent clients
-  type RecentClient = { id: string; first_name: string; last_name: string; is_active: boolean; created_at: string }
-  const recentClients = (recentClientsRes.data ?? []) as unknown as RecentClient[]
-
-  // Typed shapes for outstanding invoices
-  type OutstandingInvoice = {
-    id: string
-    invoice_number: string
-    total_cents: number
-    status: string
-    clients: { first_name: string; last_name: string } | null
-  }
-  const outstandingInvoices = (outstandingListRes.data ?? []) as unknown as OutstandingInvoice[]
-
-  const stats = [
-    {
-      label: 'Appointments today',
-      value: todayCount.toString(),
-      change: todayCount === 0 ? 'No sessions today' : `${todayCount} scheduled`,
-      color: 'text-brand-600',
-      bg: 'bg-brand-50',
-      icon: (
-        <svg className="h-5 w-5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      ),
-    },
-    {
-      label: 'Active clients',
-      value: activeClients.toString(),
-      change: activeClients === 0 ? 'No clients yet' : `${activeClients} active`,
-      color: 'text-green-600',
-      bg: 'bg-green-50',
-      icon: (
-        <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-            d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      ),
-    },
-    {
-      label: 'Pending invoices',
-      value: pendingCents > 0 ? fmtAUD(pendingCents) : '$0',
-      change: pendingCents === 0 ? 'All clear' : `${outstandingInvoices.length}+ unpaid`,
-      color: 'text-amber-600',
-      bg: 'bg-amber-50',
-      icon: (
-        <svg className="h-5 w-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      ),
-    },
-    {
-      label: 'Revenue this month',
-      value: revenueCents > 0 ? fmtAUD(revenueCents) : '$0',
-      change: revenueCents === 0 ? 'No paid sessions yet' : 'From paid invoices',
-      color: 'text-purple-600',
-      bg: 'bg-purple-50',
-      icon: (
-        <svg className="h-5 w-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-            d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      ),
-    },
-  ]
-
-  const quickActions = [
-    { label: 'New appointment', href: '/dashboard/calendar', color: 'bg-brand-600 text-white hover:bg-brand-700' },
-    { label: 'Add client', href: '/dashboard/clients', color: 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50' },
-    { label: 'Create invoice', href: '/dashboard/invoices', color: 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50' },
-  ]
-
-  const checklist = [
-    { done: hasClient,       label: 'Add your first client',       href: '/dashboard/clients' },
-    { done: hasAvailability, label: 'Set your availability',        href: '/dashboard/availability' },
-    { done: hasService,      label: 'Configure a service',          href: '/dashboard/services' },
-    { done: hasSession,      label: 'Book your first appointment',  href: '/dashboard/calendar' },
-  ]
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Overview</h1>
           <p className="mt-0.5 text-sm text-gray-500">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            {now.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
           </p>
         </div>
-        <div className="flex gap-2">
-          {quickActions.map((a) => (
-            <a
-              key={a.label}
-              href={a.href}
-              className={`rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${a.color}`}
-            >
-              {a.label}
-            </a>
-          ))}
+        <div className="flex flex-wrap justify-end gap-2">
+          <a href="/dashboard/calendar" className="rounded-lg px-3.5 py-2 text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 transition-colors">
+            New appointment
+          </a>
+          <a href="/dashboard/clients" className="rounded-lg px-3.5 py-2 text-sm font-medium bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 transition-colors">
+            Add client
+          </a>
+          <a href="/dashboard/invoices" className="rounded-lg px-3.5 py-2 text-sm font-medium bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 transition-colors">
+            Create invoice
+          </a>
         </div>
       </div>
 
       {/* Stat cards */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map((s) => (
-          <Card key={s.label} padding="md" className="flex items-start gap-4">
-            <div className={`rounded-xl p-2.5 ${s.bg}`}>{s.icon}</div>
-            <div>
-              <p className="text-xs font-medium text-gray-500">{s.label}</p>
-              <p className={`mt-0.5 text-2xl font-bold ${s.color}`}>{s.value}</p>
-              <p className="mt-0.5 text-xs text-gray-400">{s.change}</p>
-            </div>
-          </Card>
-        ))}
+      <div className="grid gap-3 grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          icon={<CalIcon />}
+          bg="bg-brand-50"
+          label="Appointments today"
+          value={todaySessions.length.toString()}
+          valueColor="text-brand-600"
+          sub={
+            overdueCount > 0
+              ? <span className="text-red-500">{overdueCount} overdue invoice{overdueCount !== 1 ? 's' : ''}</span>
+              : <span>{todaySessions.length === 0 ? 'Nothing scheduled' : `${todaySessions.length} session${todaySessions.length !== 1 ? 's' : ''}`}</span>
+          }
+        />
+        <StatCard
+          icon={<PeopleIcon />}
+          bg="bg-green-50"
+          label="Active clients"
+          value={activeClients.toString()}
+          valueColor="text-green-600"
+          sub={<span>{activeClients === 0 ? 'No clients yet' : `${activeClients} active`}</span>}
+        />
+        <StatCard
+          icon={<InvIcon />}
+          bg="bg-amber-50"
+          label="Pending invoices"
+          value={pendingCents > 0 ? fmtAUD(pendingCents) : '$0'}
+          valueColor="text-amber-600"
+          sub={
+            pendingCents === 0
+              ? <span>All clear</span>
+              : <span>
+                  {[
+                    overdueCount > 0 && `${overdueCount} overdue`,
+                    sentCount > 0 && `${sentCount} sent`,
+                    draftCount > 0 && `${draftCount} draft`,
+                  ].filter(Boolean).join(' · ')}
+                </span>
+          }
+        />
+        <StatCard
+          icon={<RevIcon />}
+          bg="bg-purple-50"
+          label="Revenue this month"
+          value={revenueCents > 0 ? fmtAUD(revenueCents) : '$0'}
+          valueColor="text-purple-600"
+          sub={<span>{revenueCents === 0 ? 'No paid invoices yet' : `${revenuePaidCount} paid invoice${revenuePaidCount !== 1 ? 's' : ''}`}</span>}
+        />
       </div>
 
-      {/* Body */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Upcoming appointments */}
-        <Card className="lg:col-span-2">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Upcoming appointments</h2>
-            <a href="/dashboard/calendar" className="text-xs font-medium text-brand-600 hover:underline">
-              View calendar →
-            </a>
+      {/* Needs attention strip — only rendered when there are items */}
+      {hasAttention && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-amber-700">Needs attention</p>
+          <div className="flex flex-wrap gap-2">
+            {overdueCount > 0 && (
+              <a href="/dashboard/invoices" className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
+                {overdueCount} overdue invoice{overdueCount !== 1 ? 's' : ''}
+              </a>
+            )}
+            {missingNotesCount > 0 && (
+              <a href="/dashboard/sessions" className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                {missingNotesCount} session{missingNotesCount !== 1 ? 's' : ''} missing notes
+              </a>
+            )}
+            {draftCount > 0 && (
+              <a href="/dashboard/invoices" className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors">
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shrink-0" />
+                {draftCount} draft invoice{draftCount !== 1 ? 's' : ''} unsent
+              </a>
+            )}
+            {clientsMissingFunding > 0 && (
+              <a href="/dashboard/clients" className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                {clientsMissingFunding} client{clientsMissingFunding !== 1 ? 's' : ''} missing funding setup
+              </a>
+            )}
+            {fundingAlerts.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                {fundingAlerts.length} funding plan{fundingAlerts.length !== 1 ? 's' : ''} need attention
+              </span>
+            )}
           </div>
-          {upcomingSessions.length === 0 ? (
-            <EmptyState
-              icon="📅"
-              title="No upcoming appointments"
-              description="Schedule your first appointment from the calendar."
-              action={{ label: 'Open calendar', href: '/dashboard/calendar' }}
-            />
+        </div>
+      )}
+
+      {/* Main grid: today's schedule + action required */}
+      <div className="grid gap-5 lg:grid-cols-3">
+
+        {/* Today + coming up */}
+        <Card className="lg:col-span-2" padding="md">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Today</h2>
+            <a href="/dashboard/calendar" className="text-xs font-medium text-brand-600 hover:underline">Calendar →</a>
+          </div>
+
+          {todaySessions.length === 0 ? (
+            <p className="text-sm text-gray-400 pb-2">No sessions scheduled for today.</p>
           ) : (
             <ul className="divide-y divide-gray-50">
-              {upcomingSessions.map((s) => {
-                const clientName = s.clients
-                  ? `${s.clients.first_name} ${s.clients.last_name}`
-                  : 'Unknown client'
-                const displayDate = new Date(`${s.service_date}T12:00:00`)
-                  .toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
-                const startTime = s.start_time ? s.start_time.slice(0, 5) : null
-                const endTime = s.end_time ? s.end_time.slice(0, 5) : null
+              {todaySessions.map(s => {
+                const name = s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Unknown client'
+                const time = s.start_time
+                  ? s.end_time
+                    ? `${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}`
+                    : s.start_time.slice(0, 5)
+                  : null
+                const initials = s.clients
+                  ? `${s.clients.first_name[0]}${s.clients.last_name[0]}`
+                  : '?'
                 return (
-                  <li key={s.id} className="flex items-center gap-4 py-3">
+                  <li key={s.id} className="flex items-center gap-3 py-2.5">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-semibold text-gray-600">
+                      {initials}
+                    </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-gray-900 truncate">{clientName}</p>
-                      <p className="text-xs text-gray-400">
-                        {displayDate}
-                        {startTime && endTime && ` · ${startTime}–${endTime}`}
-                        {s.services?.name && ` · ${s.services.name}`}
+                      <a href={`/dashboard/clients/${s.client_id}`} className="text-sm font-medium text-gray-900 hover:text-brand-600 truncate block">
+                        {name}
+                      </a>
+                      <p className="text-xs text-gray-400 truncate">
+                        {[time, s.services?.name].filter(Boolean).join(' · ')}
                       </p>
                     </div>
                     <Badge color={statusColor(s.status)}>{s.status}</Badge>
@@ -277,82 +352,158 @@ export default async function DashboardPage() {
               })}
             </ul>
           )}
+
+          {upcomingSessions.length > 0 && (
+            <>
+              <div className="mt-4 mb-3 flex items-center gap-2">
+                <p className="shrink-0 text-xs font-semibold uppercase tracking-wide text-gray-400">Coming up</p>
+                <div className="flex-1 border-t border-gray-100" />
+              </div>
+              <ul className="divide-y divide-gray-50">
+                {upcomingSessions.map(s => {
+                  const name = s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Unknown client'
+                  const dateLabel = formatUpcomingDate(s.service_date, tomorrowStr)
+                  const time = s.start_time ? s.start_time.slice(0, 5) : null
+                  return (
+                    <li key={s.id} className="flex items-center gap-3 py-2.5">
+                      <span className="w-20 shrink-0 text-xs text-gray-400">{dateLabel}</span>
+                      <div className="min-w-0 flex-1">
+                        <a href={`/dashboard/clients/${s.client_id}`} className="text-sm font-medium text-gray-900 hover:text-brand-600 truncate block">
+                          {name}
+                        </a>
+                        {s.services?.name && (
+                          <p className="text-xs text-gray-400 truncate">{s.services.name}</p>
+                        )}
+                      </div>
+                      {time && <span className="shrink-0 text-xs tabular-nums text-gray-500">{time}</span>}
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+
+          {todaySessions.length === 0 && upcomingSessions.length === 0 && (
+            <EmptyState
+              title="Nothing scheduled this week"
+              description="Book appointments from the calendar."
+              action={{ label: 'Open calendar', href: '/dashboard/calendar' }}
+            />
+          )}
         </Card>
 
-        {/* Recent clients */}
-        <Card>
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Recent clients</h2>
-            <a href="/dashboard/clients" className="text-xs font-medium text-brand-600 hover:underline">
-              All clients →
-            </a>
-          </div>
-          {recentClients.length === 0 ? (
-            <EmptyState
-              icon="👥"
-              title="No clients yet"
-              description="Add your first client to get started."
-              action={{ label: 'Add client', href: '/dashboard/clients' }}
-            />
+        {/* Action required */}
+        <Card padding="md">
+          <h2 className="mb-4 font-semibold text-gray-900">Action required</h2>
+          {!hasAttention ? (
+            <div className="flex flex-col items-center py-6 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
+                <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <p className="mt-3 text-sm font-medium text-gray-700">All clear</p>
+              <p className="mt-1 text-xs text-gray-400">Nothing needs your attention.</p>
+            </div>
           ) : (
-            <ul className="divide-y divide-gray-50">
-              {recentClients.map((c) => (
-                <li key={c.id} className="flex items-center gap-3 py-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-semibold text-gray-600">
-                    {c.first_name[0]}{c.last_name[0]}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <a
-                      href={`/dashboard/clients/${c.id}`}
-                      className="text-sm font-medium text-gray-900 hover:text-brand-600 truncate block"
-                    >
-                      {c.first_name} {c.last_name}
-                    </a>
-                    <p className="text-xs text-gray-400">
-                      Added {new Date(c.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
-                    </p>
-                  </div>
-                  {!c.is_active && <Badge color="gray">Inactive</Badge>}
-                </li>
-              ))}
+            <ul className="space-y-1.5">
+              {overdueCount > 0 && (
+                <ActionItem
+                  href="/dashboard/invoices"
+                  dot="bg-red-500"
+                  textColor="text-red-600"
+                  label={`${overdueCount} overdue invoice${overdueCount !== 1 ? 's' : ''}`}
+                  sub="Requires immediate action"
+                />
+              )}
+              {missingNotesCount > 0 && (
+                <ActionItem
+                  href="/dashboard/sessions"
+                  dot="bg-amber-400"
+                  textColor="text-amber-700"
+                  label={`${missingNotesCount} session${missingNotesCount !== 1 ? 's' : ''} missing notes`}
+                  sub="Complete session documentation"
+                />
+              )}
+              {draftCount > 0 && (
+                <ActionItem
+                  href="/dashboard/invoices"
+                  dot="bg-blue-400"
+                  textColor="text-blue-600"
+                  label={`${draftCount} draft invoice${draftCount !== 1 ? 's' : ''} unsent`}
+                  sub="Send to clients when ready"
+                />
+              )}
+              {clientsMissingFunding > 0 && (
+                <ActionItem
+                  href="/dashboard/clients"
+                  dot="bg-amber-400"
+                  textColor="text-amber-700"
+                  label={`${clientsMissingFunding} client${clientsMissingFunding !== 1 ? 's' : ''} missing funding setup`}
+                  sub="Funding tracking incomplete"
+                />
+              )}
+              {fundingAlerts.map(p => {
+                const clientName = p.clients
+                  ? `${p.clients.first_name} ${p.clients.last_name}`
+                  : 'Client'
+                const days = daysUntil(p.plan_end_date)
+                const isExpiring = p.plan_end_date <= thirtyOutStr
+                const sub = isExpiring
+                  ? `Expires in ${days} day${days !== 1 ? 's' : ''}`
+                  : `${Math.round(Number(p.utilisation_percentage))}% utilised`
+                return (
+                  <ActionItem
+                    key={p.id}
+                    href={`/dashboard/clients/${p.client_id}`}
+                    dot="bg-amber-400"
+                    textColor="text-amber-700"
+                    label={`${clientName} — ${p.plan_name}`}
+                    sub={sub}
+                  />
+                )
+              })}
             </ul>
           )}
         </Card>
       </div>
 
-      {/* Invoices + getting started */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
+      {/* Secondary grid: outstanding invoices + funding alerts */}
+      <div className="grid gap-5 lg:grid-cols-2">
+
+        {/* Outstanding invoices */}
+        <Card padding="md">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="font-semibold text-gray-900">Outstanding invoices</h2>
-            {outstandingInvoices.length === 0 ? (
-              <Badge color="green">All paid</Badge>
-            ) : (
-              <a href="/dashboard/invoices" className="text-xs font-medium text-brand-600 hover:underline">
-                View all →
-              </a>
-            )}
+            {outstandingInvoices.length === 0
+              ? <Badge color="green">All paid</Badge>
+              : <a href="/dashboard/invoices" className="text-xs font-medium text-brand-600 hover:underline">View all →</a>
+            }
           </div>
           {outstandingInvoices.length === 0 ? (
-            <EmptyState icon="💳" title="No outstanding invoices" description="Create an invoice after your next session." />
+            <EmptyState title="No outstanding invoices" description="Create an invoice after your next session." />
           ) : (
             <ul className="divide-y divide-gray-50">
-              {outstandingInvoices.map((inv) => {
+              {outstandingInvoices.map(inv => {
                 const clientName = inv.clients
                   ? `${inv.clients.first_name} ${inv.clients.last_name}`
                   : 'Unknown client'
+                const isOverdue = inv.status === 'overdue'
                 return (
                   <li key={inv.id}>
                     <a
                       href={`/dashboard/invoices/${inv.id}`}
-                      className="flex items-center gap-4 py-3 hover:bg-gray-50 -mx-6 px-6 transition-colors"
+                      className="flex items-center gap-3 py-2.5 hover:bg-gray-50 -mx-6 px-6 transition-colors"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-gray-900 truncate">{clientName}</p>
-                        <p className="text-xs text-gray-400">{inv.invoice_number}</p>
+                        <p className="text-xs text-gray-400">
+                          {inv.invoice_number}
+                          {inv.due_at && ` · Due ${new Date(`${inv.due_at}T12:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`}
+                        </p>
                       </div>
                       <Badge color={statusColor(inv.status)}>{inv.status}</Badge>
-                      <span className="shrink-0 text-sm font-semibold text-gray-900">
+                      <span className={`shrink-0 text-sm font-semibold tabular-nums ${isOverdue ? 'text-red-600' : 'text-gray-900'}`}>
                         {fmtAUD(inv.total_cents)}
                       </span>
                     </a>
@@ -363,10 +514,163 @@ export default async function DashboardPage() {
           )}
         </Card>
 
-        <Card>
+        {/* Funding alerts */}
+        <Card padding="md">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Funding alerts</h2>
+            {activeClients > 0 && clientsMissingFunding === 0 && fundingAlerts.length === 0 && (
+              <Badge color="green">All plans within budget</Badge>
+            )}
+          </div>
+          {activeClients === 0 ? (
+            <EmptyState
+              title="No active funding plans"
+              description="Add funding plans via client profiles."
+            />
+          ) : clientsMissingFunding > 0 ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">
+                      {clientsMissingFunding} client{clientsMissingFunding !== 1 ? 's' : ''} missing funding setup
+                    </p>
+                    <p className="mt-0.5 text-xs text-amber-600">
+                      {clientsWithFunding} of {activeClients} client{activeClients !== 1 ? 's' : ''} have funding configured.
+                    </p>
+                  </div>
+                  <a href="/dashboard/clients" className="shrink-0 text-xs font-medium text-amber-700 hover:underline">
+                    Set up →
+                  </a>
+                </div>
+              </div>
+              {fundingAlerts.length > 0 && (
+                <ul className="space-y-3">
+                  {fundingAlerts.map(p => {
+                    const clientName = p.clients
+                      ? `${p.clients.first_name} ${p.clients.last_name}`
+                      : 'Unknown client'
+                    const pct = Math.min(Math.round(Number(p.utilisation_percentage)), 100)
+                    const days = daysUntil(p.plan_end_date)
+                    const isExpiring = p.plan_end_date <= thirtyOutStr
+                    const barColor = pct >= 90 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-green-500'
+                    const pctColor  = pct >= 90 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-gray-600'
+                    return (
+                      <li key={p.id}>
+                        <a
+                          href={`/dashboard/clients/${p.client_id}`}
+                          className="group block rounded-lg p-3 hover:bg-gray-50 transition-colors -mx-3"
+                        >
+                          <div className="mb-2 flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate group-hover:text-brand-600">
+                                {clientName}
+                              </p>
+                              <p className="text-xs text-gray-400 truncate">{p.plan_name}</p>
+                            </div>
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              {isExpiring && (
+                                <Badge color={days <= 7 ? 'red' : 'amber'}>
+                                  {days <= 0 ? 'Expired' : `${days}d left`}
+                                </Badge>
+                              )}
+                              <span className={`text-xs font-semibold tabular-nums ${pctColor}`}>
+                                {pct}%
+                              </span>
+                            </div>
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+                          </div>
+                          <p className="mt-1.5 text-xs text-gray-400">
+                            {fmtAUD(p.remaining_amount)} remaining · expires{' '}
+                            {new Date(`${p.plan_end_date}T12:00:00`).toLocaleDateString('en-AU', {
+                              day: 'numeric', month: 'short', year: 'numeric',
+                            })}
+                          </p>
+                        </a>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          ) : fundingAlerts.length > 0 ? (
+            <ul className="space-y-3">
+              {fundingAlerts.map(p => {
+                const clientName = p.clients
+                  ? `${p.clients.first_name} ${p.clients.last_name}`
+                  : 'Unknown client'
+                const pct = Math.min(Math.round(Number(p.utilisation_percentage)), 100)
+                const days = daysUntil(p.plan_end_date)
+                const isExpiring = p.plan_end_date <= thirtyOutStr
+                const barColor = pct >= 90 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-green-500'
+                const pctColor  = pct >= 90 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-gray-600'
+                return (
+                  <li key={p.id}>
+                    <a
+                      href={`/dashboard/clients/${p.client_id}`}
+                      className="group block rounded-lg p-3 hover:bg-gray-50 transition-colors -mx-3"
+                    >
+                      <div className="mb-2 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate group-hover:text-brand-600">
+                            {clientName}
+                          </p>
+                          <p className="text-xs text-gray-400 truncate">{p.plan_name}</p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          {isExpiring && (
+                            <Badge color={days <= 7 ? 'red' : 'amber'}>
+                              {days <= 0 ? 'Expired' : `${days}d left`}
+                            </Badge>
+                          )}
+                          <span className={`text-xs font-semibold tabular-nums ${pctColor}`}>
+                            {pct}%
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <p className="mt-1.5 text-xs text-gray-400">
+                        {fmtAUD(p.remaining_amount)} remaining · expires{' '}
+                        {new Date(`${p.plan_end_date}T12:00:00`).toLocaleDateString('en-AU', {
+                          day: 'numeric', month: 'short', year: 'numeric',
+                        })}
+                      </p>
+                    </a>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <div className="flex flex-col items-center py-6 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
+                <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <p className="mt-3 text-sm font-medium text-gray-700">All plans within budget</p>
+              <p className="mt-1 text-xs text-gray-400">
+                {allActivePlans.length} active plan{allActivePlans.length !== 1 ? 's' : ''} tracked.
+              </p>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Getting started — hidden once all setup steps are done */}
+      {!checklistDone && (
+        <Card padding="md">
           <h2 className="mb-4 font-semibold text-gray-900">Getting started</h2>
           <ul className="space-y-3">
-            {checklist.map((item) => (
+            {[
+              { done: hasClient,       label: 'Add your first client',      href: '/dashboard/clients' },
+              { done: hasAvailability, label: 'Set your availability',       href: '/dashboard/availability' },
+              { done: hasService,      label: 'Configure a service',         href: '/dashboard/services' },
+              { done: hasSession,      label: 'Book your first appointment', href: '/dashboard/calendar' },
+            ].map(item => (
               <li key={item.label} className="flex items-center gap-3">
                 <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${item.done ? 'border-green-500 bg-green-500' : 'border-gray-300'}`}>
                   {item.done && (
@@ -382,35 +686,97 @@ export default async function DashboardPage() {
             ))}
           </ul>
         </Card>
-      </div>
+      )}
     </div>
   )
 }
 
-function EmptyState({
-  icon,
-  title,
-  description,
-  action,
-}: {
-  icon: string
-  title: string
-  description: string
-  action?: { label: string; href: string }
+// ---------------------------------------------------------------------------
+// Local helper components
+// ---------------------------------------------------------------------------
+
+function StatCard({ icon, bg, label, value, valueColor, sub }: {
+  icon: ReactNode; bg: string; label: string; value: string; valueColor: string; sub: ReactNode
+}) {
+  return (
+    <Card padding="md" className="flex items-start gap-4">
+      <div className={`rounded-xl p-2.5 ${bg} shrink-0`}>{icon}</div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-gray-500 truncate">{label}</p>
+        <p className={`mt-0.5 text-2xl font-bold ${valueColor}`}>{value}</p>
+        <div className="mt-0.5 text-xs text-gray-400 truncate">{sub}</div>
+      </div>
+    </Card>
+  )
+}
+
+function ActionItem({ href, dot, textColor, label, sub }: {
+  href: string; dot: string; textColor: string; label: string; sub: string
+}) {
+  return (
+    <li>
+      <a href={href} className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-gray-50 -mx-2.5 transition-colors">
+        <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+        <div className="min-w-0 flex-1">
+          <p className={`text-sm font-medium truncate ${textColor}`}>{label}</p>
+          <p className="text-xs text-gray-400">{sub}</p>
+        </div>
+        <svg className="ml-auto h-3.5 w-3.5 shrink-0 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </a>
+    </li>
+  )
+}
+
+function EmptyState({ title, description, action }: {
+  title: string; description: string; action?: { label: string; href: string }
 }) {
   return (
     <div className="flex flex-col items-center py-8 text-center">
-      <span className="text-3xl">{icon}</span>
-      <p className="mt-2 text-sm font-medium text-gray-700">{title}</p>
+      <p className="text-sm font-medium text-gray-700">{title}</p>
       <p className="mt-1 text-xs text-gray-400">{description}</p>
       {action && (
-        <a
-          href={action.href}
-          className="mt-4 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50"
-        >
+        <a href={action.href} className="mt-4 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors">
           {action.label}
         </a>
       )}
     </div>
+  )
+}
+
+function CalIcon() {
+  return (
+    <svg className="h-5 w-5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
+        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  )
+}
+
+function PeopleIcon() {
+  return (
+    <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
+        d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
+  )
+}
+
+function InvIcon() {
+  return (
+    <svg className="h-5 w-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
+        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    </svg>
+  )
+}
+
+function RevIcon() {
+  return (
+    <svg className="h-5 w-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
+        d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
   )
 }
