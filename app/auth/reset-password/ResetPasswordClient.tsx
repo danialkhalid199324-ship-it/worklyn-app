@@ -6,6 +6,11 @@ import AuthLogo from '@/components/auth/AuthLogo'
 import { updatePassword } from '@/app/actions/auth'
 import { createClient } from '@/lib/supabase'
 
+function safeDecode(s: string | undefined): string {
+  if (!s) return ''
+  try { return decodeURIComponent(s) } catch { return s }
+}
+
 type Status = 'checking' | 'ready' | 'expired'
 
 export default function ResetPasswordClient({ error }: { error?: string }) {
@@ -88,7 +93,7 @@ export default function ResetPasswordClient({ error }: { error?: string }) {
 
         {error && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {decodeURIComponent(error)}
+            {safeDecode(error)}
           </div>
         )}
 

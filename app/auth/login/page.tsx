@@ -1,7 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import AuthLogo from '@/components/auth/AuthLogo'
+import AuthSubmitButton from '@/components/auth/AuthSubmitButton'
 import { login } from '@/app/actions/auth'
+
+function safeDecode(s: string | undefined): string {
+  if (!s) return ''
+  try { return decodeURIComponent(s) } catch { return s }
+}
 
 export const metadata: Metadata = { title: 'Sign in' }
 
@@ -17,19 +23,19 @@ export default function LoginPage({
           <AuthLogo />
           <h1 className="mt-5 text-center text-xl font-bold text-gray-900">Welcome back</h1>
           <p className="mt-1 text-center text-sm text-gray-500">
-            Sign in to your account to continue.
+            Sign in to continue managing your practice.
           </p>
         </div>
 
         {searchParams.message && (
           <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-            {decodeURIComponent(searchParams.message)}
+            {safeDecode(searchParams.message)}
           </div>
         )}
 
         {searchParams.error && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {decodeURIComponent(searchParams.error)}
+            {safeDecode(searchParams.error)}
           </div>
         )}
 
@@ -74,12 +80,7 @@ export default function LoginPage({
             />
           </div>
 
-          <button
-            type="submit"
-            className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
-          >
-            Sign in
-          </button>
+          <AuthSubmitButton label="Sign in" pendingLabel="Signing in…" />
         </form>
 
         <p className="mt-6 text-center text-sm text-gray-500">

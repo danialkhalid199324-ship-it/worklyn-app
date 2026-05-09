@@ -25,8 +25,9 @@ interface Props {
 
 export default function TeamMemberModal({ onClose }: Props) {
   const [isPending, startTransition] = useTransition()
-  const [error, setError]       = useState<string | null>(null)
-  const [color, setColor]       = useState('#6366F1')
+  const [error,   setError]   = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
+  const [color, setColor]     = useState('#6366F1')
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -35,8 +36,13 @@ export default function TeamMemberModal({ onClose }: Props) {
     fd.set('calendar_color', color)
     startTransition(async () => {
       const result = await addClinicMember(fd)
-      if (result?.error) setError(result.error)
-      else onClose()
+      if (result?.error) {
+        setError(result.error)
+      } else if ('warning' in result && result.warning) {
+        setWarning(result.warning)
+      } else {
+        onClose()
+      }
     })
   }
 
@@ -157,22 +163,41 @@ export default function TeamMemberModal({ onClose }: Props) {
             </div>
           )}
 
+          {warning && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+              <p className="font-semibold mb-0.5">Practitioner added — email not sent</p>
+              <p>{warning}</p>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex justify-end gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isPending}
-              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60 transition-colors"
-            >
-              {isPending ? 'Sending invite…' : 'Send invite'}
-            </button>
+            {warning ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition-colors"
+              >
+                Close
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60 transition-colors"
+                >
+                  {isPending ? 'Sending invite…' : 'Send invite'}
+                </button>
+              </>
+            )}
           </div>
         </form>
       </div>

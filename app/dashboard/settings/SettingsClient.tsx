@@ -257,7 +257,7 @@ export default function SettingsClient({
           <Card>
             <h2 className="mb-1 font-semibold text-gray-900">Practice & Billing Details</h2>
             <p className="mb-5 text-sm text-gray-500">
-              These details appear on invoices you send to clients and plan managers.
+              These details appear on invoices sent to participants, plan managers, and NDIA claims.
             </p>
 
             {/* Logo upload */}

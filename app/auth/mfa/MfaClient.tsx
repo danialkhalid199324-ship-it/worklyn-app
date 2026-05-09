@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef, useState, useTransition } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import AuthLogo from '@/components/auth/AuthLogo'
 import { verifyMfaChallenge } from '@/app/actions/mfa'
@@ -44,6 +43,12 @@ export default function MfaClient({ redirectTo }: Props) {
   function handleCodeChange(e: React.ChangeEvent<HTMLInputElement>) {
     // Accept digits only, max 6 characters
     setCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+  }
+
+  async function handleSignOut() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push('/auth/login')
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -128,12 +133,13 @@ export default function MfaClient({ redirectTo }: Props) {
 
         <p className="mt-6 text-center text-sm text-gray-500">
           Wrong account?{' '}
-          <Link
-            href="/auth/login"
+          <button
+            type="button"
+            onClick={handleSignOut}
             className="font-medium text-brand-600 hover:underline"
           >
             Sign in with a different account
-          </Link>
+          </button>
         </p>
 
       </div>

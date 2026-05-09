@@ -1,14 +1,20 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import AuthLogo from '@/components/auth/AuthLogo'
+import AuthSubmitButton from '@/components/auth/AuthSubmitButton'
 import { signup } from '@/app/actions/auth'
+
+function safeDecode(s: string | undefined): string {
+  if (!s) return ''
+  try { return decodeURIComponent(s) } catch { return s }
+}
 
 export const metadata: Metadata = { title: 'Create account' }
 
 export default function SignupPage({
   searchParams,
 }: {
-  searchParams: { error?: string }
+  searchParams: { error?: string; email?: string }
 }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 pb-16">
@@ -17,13 +23,13 @@ export default function SignupPage({
           <AuthLogo />
           <h1 className="mt-5 text-center text-xl font-bold text-gray-900">Create your account</h1>
           <p className="mt-1 text-center text-sm text-gray-500">
-            Start managing your practice today — free forever.
+            Operational infrastructure for allied health providers — free to start.
           </p>
         </div>
 
         {searchParams.error && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {decodeURIComponent(searchParams.error)}
+            {safeDecode(searchParams.error)}
           </div>
         )}
 
@@ -72,6 +78,7 @@ export default function SignupPage({
               required
               className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               placeholder="you@clinic.com"
+              defaultValue={searchParams.email ?? ''}
             />
           </div>
 
@@ -91,12 +98,7 @@ export default function SignupPage({
             />
           </div>
 
-          <button
-            type="submit"
-            className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
-          >
-            Create account
-          </button>
+          <AuthSubmitButton label="Create account" pendingLabel="Creating account…" />
 
           <p className="text-center text-xs text-gray-400">
             By signing up you agree to our{' '}

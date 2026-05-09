@@ -240,13 +240,13 @@ export default async function DashboardPage() {
         <StatCard
           icon={<CalIcon />}
           bg="bg-brand-50"
-          label="Today's appointments"
+          label="Today's sessions"
           value={todaySessions.length.toString()}
           valueColor="text-brand-700"
           sub={
             overdueCount > 0
               ? <span className="font-medium text-red-500">{overdueCount} overdue invoice{overdueCount !== 1 ? 's' : ''}</span>
-              : <span>{todaySessions.length === 0 ? 'Nothing scheduled' : `${todaySessions.length} session${todaySessions.length !== 1 ? 's' : ''}`}</span>
+              : <span>{todaySessions.length === 0 ? 'No sessions today' : `${todaySessions.length} session${todaySessions.length !== 1 ? 's' : ''}`}</span>
           }
         />
         <StatCard
@@ -361,8 +361,8 @@ export default async function DashboardPage() {
 
           {todaySessions.length === 0 && upcomingSessions.length === 0 && (
             <EmptyState
-              title="Nothing scheduled this week"
-              description="Book appointments from the calendar."
+              title="No sessions scheduled this week"
+              description="Schedule sessions from the calendar."
               action={{ label: 'Open calendar', href: '/dashboard/calendar' }}
             />
           )}
@@ -379,7 +379,7 @@ export default async function DashboardPage() {
                 </svg>
               </div>
               <p className="mt-3 text-sm font-semibold text-gray-700">All clear</p>
-              <p className="mt-1 text-xs text-gray-400">Nothing needs your attention.</p>
+              <p className="mt-1 text-xs text-gray-400">Your operations are in order.</p>
             </div>
           ) : (
             <ul className="space-y-1">
@@ -407,7 +407,7 @@ export default async function DashboardPage() {
                   dot="bg-blue-400"
                   textColor="text-blue-600"
                   label={`${draftCount} draft invoice${draftCount !== 1 ? 's' : ''} unsent`}
-                  sub="Send to clients when ready"
+                  sub="Send to participants or plan managers when ready"
                 />
               )}
               {clientsMissingFunding > 0 && (
@@ -573,7 +573,7 @@ export default async function DashboardPage() {
               { done: hasClient,       label: 'Add your first client',      href: '/dashboard/clients' },
               { done: hasAvailability, label: 'Set your availability',       href: '/dashboard/availability' },
               { done: hasService,      label: 'Configure a service',         href: '/dashboard/services' },
-              { done: hasSession,      label: 'Book your first appointment', href: '/dashboard/calendar' },
+              { done: hasSession,      label: 'Schedule your first session', href: '/dashboard/calendar' },
             ].map(item => (
               <li key={item.label} className="flex items-center gap-3">
                 <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${item.done ? 'border-green-500 bg-green-500' : 'border-gray-300'}`}>

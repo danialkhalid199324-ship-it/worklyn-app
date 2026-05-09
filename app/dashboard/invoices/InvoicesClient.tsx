@@ -87,7 +87,7 @@ export default function InvoicesClient({ invoices, clients, nextInvoiceNumber, o
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Invoices</h1>
-          <p className="mt-0.5 text-sm text-gray-500">Track, send, and manage client invoices.</p>
+          <p className="mt-0.5 text-sm text-gray-500">Manage billing, track payments, and process NDIA claims.</p>
         </div>
         <Button onClick={() => setShowModal(true)}>
           <svg className="mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

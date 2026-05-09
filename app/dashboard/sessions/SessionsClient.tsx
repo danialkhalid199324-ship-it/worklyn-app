@@ -83,7 +83,7 @@ export default function SessionsClient({ sessions, clients, services, priceGuide
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Sessions</h1>
-          <p className="mt-0.5 text-sm text-gray-500">Record delivered sessions and generate invoices automatically.</p>
+          <p className="mt-0.5 text-sm text-gray-500">Log service delivery and generate compliant invoices automatically.</p>
         </div>
         <div className="flex items-center gap-2">
           {unbilledCount > 0 && (

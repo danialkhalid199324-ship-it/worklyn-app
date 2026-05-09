@@ -47,7 +47,7 @@ export default function ClientsClient({ clients }: Props) {
           <div>
             <h1 className="text-xl font-bold text-gray-900">Clients</h1>
             <p className="mt-0.5 text-sm text-gray-500">
-              {clients.length} {clients.length === 1 ? 'client' : 'clients'} in your practice.
+              Manage participant profiles, funding plans, and service history.
             </p>
           </div>
           <Button onClick={() => setModal({ mode: 'create' })}>
@@ -71,7 +71,7 @@ export default function ClientsClient({ clients }: Props) {
               </svg>
               <input
                 type="search"
-                placeholder="Search clients…"
+                placeholder="Search participants…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400"
@@ -82,7 +82,7 @@ export default function ClientsClient({ clients }: Props) {
               onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
               className="rounded-lg border border-gray-200 py-2 pl-3 pr-8 text-sm text-gray-600 focus:border-brand-400 focus:outline-none"
             >
-              <option value="all">All clients</option>
+              <option value="all">All participants</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
@@ -113,12 +113,12 @@ export default function ClientsClient({ clients }: Props) {
                       </svg>
                     </div>
                     <p className="mt-2 text-sm font-medium text-gray-700">
-                      {search || statusFilter !== 'all' ? 'No clients match your filters' : 'No clients yet'}
+                      {search || statusFilter !== 'all' ? 'No participants match your filters' : 'No participants yet'}
                     </p>
                     <p className="mt-1 text-xs text-gray-400">
                       {search || statusFilter !== 'all'
                         ? 'Try adjusting your search or filter.'
-                        : 'Add your first client using the button above.'}
+                        : 'Add your first participant to start tracking service delivery.'}
                     </p>
                   </td>
                 </tr>

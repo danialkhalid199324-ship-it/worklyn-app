@@ -4,7 +4,62 @@ import { revalidatePath } from 'next/cache'
 import { requireAuth } from '@/lib/auth'
 import { getPractitionerByUserId } from '@/lib/db'
 import { createAdminClient } from '@/lib/supabase-server'
+import { sendEmail } from '@/lib/email'
 import type { ClinicRole } from '@/types/database'
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Admin',
+  practitioner: 'Practitioner',
+  receptionist: 'Receptionist',
+  finance: 'Finance',
+}
+
+function buildInviteEmail({
+  inviteeName,
+  inviteeEmail,
+  inviterName,
+  orgName,
+  roleLabel,
+  signupUrl,
+}: {
+  inviteeName: string
+  inviteeEmail: string
+  inviterName: string
+  orgName: string
+  roleLabel: string
+  signupUrl: string
+}): string {
+  const greeting = inviteeName || 'there'
+  return `
+    <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;color:#1a1a2e">
+      <div style="background:#6366f1;padding:24px 32px;border-radius:12px 12px 0 0">
+        <p style="color:#e0e7ff;margin:0;font-size:13px">WORKLYN</p>
+        <p style="color:#fff;margin:4px 0 0;font-size:22px;font-weight:700">You&rsquo;ve been invited</p>
+      </div>
+      <div style="background:#f9fafb;padding:24px 32px;border-radius:0 0 12px 12px;border:1px solid #e5e7eb;border-top:none">
+        <p style="margin:0 0 16px">Hi ${greeting},</p>
+        <p style="margin:0 0 24px">
+          <strong>${inviterName}</strong> has invited you to join
+          <strong>${orgName}</strong> on Worklyn as a
+          <strong>${roleLabel}</strong>.
+        </p>
+        <div style="text-align:center;margin:28px 0">
+          <a href="${signupUrl}"
+             style="background:#6366f1;color:#fff;text-decoration:none;padding:13px 32px;border-radius:8px;font-weight:600;font-size:15px;display:inline-block">
+            Create your account
+          </a>
+        </div>
+        <p style="font-size:12px;color:#9ca3af;margin:0 0 20px;text-align:center">
+          Or copy this link: <span style="color:#6366f1">${signupUrl}</span>
+        </p>
+        <p style="margin:0;font-size:12px;color:#9ca3af">
+          This invitation was sent to ${inviteeEmail}.
+          If you weren&rsquo;t expecting it, you can safely ignore this email.
+        </p>
+      </div>
+    </div>
+  `
+}
 
 async function requireAdmin() {
   const user = await requireAuth()
@@ -109,6 +164,43 @@ export async function addClinicMember(formData: FormData) {
         invited_by: admin.id, invited_email: email, invited_name: fullName || null,
       })
     if (insertErr) return { error: insertErr.message }
+
+    // Send invite email — non-blocking: failure logs but doesn't roll back the invite
+    let warning: string | undefined
+    try {
+      const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')
+      const signupUrl = `${appUrl}/auth/signup?email=${encodeURIComponent(email)}`
+
+      const { data: orgRow } = await adminClient
+        .from('organisation_settings')
+        .select('business_name')
+        .eq('practitioner_id', admin.id)
+        .maybeSingle()
+      const orgName   = orgRow?.business_name ?? `${admin.first_name} ${admin.last_name}'s Practice`
+      const inviterName = admin.display_name ?? `${admin.first_name} ${admin.last_name}`
+      const roleLabel   = ROLE_LABELS[role] ?? role
+
+      await sendEmail({
+        to: email,
+        toName: fullName || undefined,
+        subject: `You've been invited to join ${orgName} on Worklyn`,
+        html: buildInviteEmail({
+          inviteeName: fullName,
+          inviteeEmail: email,
+          inviterName,
+          orgName,
+          roleLabel,
+          signupUrl,
+        }),
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      console.error('[addClinicMember] invite email failed:', msg)
+      warning = `Invite created, but the email couldn't be sent (${msg}). Contact them directly at ${email}.`
+    }
+
+    revalidatePath('/dashboard/team')
+    return warning ? { success: true, warning } : { success: true }
   }
 
   revalidatePath('/dashboard/team')

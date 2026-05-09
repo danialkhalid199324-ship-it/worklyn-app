@@ -1,7 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import AuthLogo from '@/components/auth/AuthLogo'
+import AuthSubmitButton from '@/components/auth/AuthSubmitButton'
 import { requestPasswordReset } from '@/app/actions/auth'
+
+function safeDecode(s: string | undefined): string {
+  if (!s) return ''
+  try { return decodeURIComponent(s) } catch { return s }
+}
 
 export const metadata: Metadata = { title: 'Forgot password' }
 
@@ -46,7 +52,7 @@ export default function ForgotPasswordPage({
           <>
             {searchParams.error && (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {decodeURIComponent(searchParams.error)}
+                {safeDecode(searchParams.error)}
               </div>
             )}
 
@@ -69,12 +75,7 @@ export default function ForgotPasswordPage({
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
-              >
-                Send reset link
-              </button>
+              <AuthSubmitButton label="Send reset link" pendingLabel="Sending…" />
             </form>
           </>
         )}
