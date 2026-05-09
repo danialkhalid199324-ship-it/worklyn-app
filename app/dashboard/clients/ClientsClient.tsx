@@ -6,6 +6,7 @@ import Card from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import ClientModal from './ClientModal'
+import BulkUploadModal from './BulkUploadModal'
 import { formatDate } from '@/lib/utils'
 import type { ClientRow } from '@/types/database'
 
@@ -21,6 +22,7 @@ export default function ClientsClient({ clients }: Props) {
   const [modal, setModal] = useState<
     { mode: 'create' } | { mode: 'edit'; client: ClientRow } | null
   >(null)
+  const [bulkOpen, setBulkOpen] = useState(false)
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -50,12 +52,24 @@ export default function ClientsClient({ clients }: Props) {
               Manage participant profiles, funding plans, and service history.
             </p>
           </div>
-          <Button onClick={() => setModal({ mode: 'create' })}>
-            <svg className="mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add client
-          </Button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setBulkOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              Bulk upload
+            </button>
+            <Button onClick={() => setModal({ mode: 'create' })}>
+              <svg className="mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add client
+            </Button>
+          </div>
         </div>
 
         {/* Search + filters */}
@@ -182,6 +196,8 @@ export default function ClientsClient({ clients }: Props) {
           onClose={() => setModal(null)}
         />
       )}
+
+      {bulkOpen && <BulkUploadModal onClose={() => setBulkOpen(false)} />}
     </>
   )
 }

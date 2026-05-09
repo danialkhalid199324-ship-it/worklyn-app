@@ -84,6 +84,45 @@ export async function updateClient(id: string, formData: FormData) {
   return { success: true }
 }
 
+export interface BulkClientRow {
+  first_name: string
+  last_name: string
+  email: string
+  phone: string
+  ndis_number: string
+  guardian_name: string
+  guardian_email: string
+  status: string
+}
+
+export async function bulkImportClients(
+  rows: BulkClientRow[],
+): Promise<{ imported: number; error?: string }> {
+  const user = await requireAuth()
+  const practitioner = await getPractitionerByUserId(user.id)
+  const supabase = await createServerSupabaseClient()
+
+  if (!rows.length) return { imported: 0, error: 'No rows to import.' }
+
+  const records = rows.map((r) => ({
+    practitioner_id: practitioner.id,
+    first_name: r.first_name.trim(),
+    last_name: r.last_name.trim(),
+    email: r.email.trim() || null,
+    phone: r.phone.trim() || null,
+    ndis_number: r.ndis_number.trim() || null,
+    self_manager_name: r.guardian_name.trim() || null,
+    self_manager_email: r.guardian_email.trim() || null,
+    is_active: r.status.trim().toLowerCase() !== 'inactive',
+  }))
+
+  const { error } = await supabase.from('clients').insert(records)
+  if (error) return { imported: 0, error: error.message }
+
+  revalidatePath('/dashboard/clients')
+  return { imported: records.length }
+}
+
 export async function toggleClientStatus(id: string, isActive: boolean) {
   const user = await requireAuth()
   const practitioner = await getPractitionerByUserId(user.id)
