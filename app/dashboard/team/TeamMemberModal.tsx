@@ -49,7 +49,7 @@ export default function TeamMemberModal({ onClose }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4 shrink-0">
           <div>
-            <h2 className="text-base font-semibold text-gray-900">Invite team member</h2>
+            <h2 className="text-base font-semibold text-gray-900">Invite Practitioner</h2>
             <p className="mt-0.5 text-xs text-gray-500">
               If they don&apos;t have an account yet, they&apos;ll appear as Pending until they sign up.
             </p>

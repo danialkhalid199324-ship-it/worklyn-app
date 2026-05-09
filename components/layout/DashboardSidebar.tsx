@@ -101,7 +101,7 @@ const navGroups = [
     items: [
       {
         href: '/dashboard/team',
-        label: 'Team',
+        label: 'Practitioners',
         icon: (
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}

@@ -9,7 +9,9 @@ import type { ClinicRole } from '@/types/database'
 async function requireAdmin() {
   const user = await requireAuth()
   const practitioner = await getPractitionerByUserId(user.id)
-  if ((practitioner.role as string) !== 'admin') {
+  // null/undefined role = migration 015 not yet applied = solo owner → allow
+  const role = practitioner.role as string | undefined
+  if (role && role !== 'admin') {
     throw new Error('Only clinic admins can manage team members.')
   }
   return practitioner

@@ -5,19 +5,25 @@ import { createAdminClient } from '@/lib/supabase-server'
 import TeamClient from './TeamClient'
 import type { ClinicMemberWithProfile } from '@/lib/db'
 
-export const metadata: Metadata = { title: 'Team' }
+export const metadata: Metadata = { title: 'Practitioners' }
 
 export default async function TeamPage() {
   const user = await requireAuth()
   const practitioner = await getPractitionerByUserId(user.id)
-  const isAdmin = (practitioner.role as string) === 'admin'
+  // role='admin' after migration 015; null/undefined before migration = solo owner
+  const practitionerRole = practitioner.role as string | undefined
+  const isAdmin = !practitionerRole || practitionerRole === 'admin'
 
   const adminClient = createAdminClient()
 
   // Fetch team members
   let members: ClinicMemberWithProfile[] = []
   if (isAdmin) {
-    members = await getClinicMembers(practitioner.id)
+    try {
+      members = await getClinicMembers(practitioner.id)
+    } catch {
+      // clinic_memberships table not yet created (migration 016 pending)
+    }
   } else {
     const { data: memberships } = await adminClient
       .from('clinic_memberships')
