@@ -12,7 +12,13 @@ import type {
   SessionNotificationRow,
   NdisPriceGuideRow,
   FundingAllocationRow,
+  ClinicMembershipRow,
 } from '@/types/database'
+
+export type ClinicMemberWithProfile = ClinicMembershipRow & {
+  member: PractitionerRow | null  // null for pending invites (no practitioner row yet)
+  email?: string
+}
 
 // ---------------------------------------------------------------------------
 // Generic database query helpers — server-side only.
@@ -534,4 +540,25 @@ export async function getClientFundingAllocations(
     .order('plan_start_date', { ascending: false })
   if (error) throw error
   return (data ?? []) as unknown as FundingAllocationRow[]
+}
+
+export async function getPractitionerById(id: string): Promise<PractitionerRow | null> {
+  const supabase = await createServerSupabaseClient()
+  const { data } = await supabase
+    .from('practitioners')
+    .select('*')
+    .eq('id', id)
+    .single()
+  return data as unknown as PractitionerRow | null
+}
+
+export async function getClinicMembers(clinicId: string): Promise<ClinicMemberWithProfile[]> {
+  const supabase = await createServerSupabaseClient()
+  const { data, error } = await supabase
+    .from('clinic_memberships')
+    .select('*, member:practitioners!clinic_memberships_member_id_fkey(*)')
+    .eq('clinic_id', clinicId)
+    .order('created_at')
+  if (error) throw error
+  return (data ?? []) as unknown as ClinicMemberWithProfile[]
 }

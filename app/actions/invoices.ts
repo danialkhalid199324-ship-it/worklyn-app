@@ -127,6 +127,11 @@ export async function sendInvoice(invoiceId: string) {
     return { error: 'No recipient email address found for this invoice. Update the client\'s billing contact details.' }
   }
 
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(invoice.recipient_email)) {
+    return { error: `Recipient email address "${invoice.recipient_email}" is not valid. Update the client's billing contact details.` }
+  }
+
   const payRef = orgSettings?.payment_reference_prefix
     ? `${orgSettings.payment_reference_prefix}-${invoice.invoice_number}`
     : invoice.invoice_number

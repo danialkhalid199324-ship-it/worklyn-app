@@ -30,18 +30,14 @@ class ResendEmailService implements EmailService {
   }
 
   async send(message: EmailMessage): Promise<void> {
-    // TEMP: force recipient to sandbox-verified address for local testing
-    const sandboxTo = 'danialkhalid199324@gmail.com'
-    const originalTo = message.toName ? `${message.toName} <${message.to}>` : message.to
-    const to = sandboxTo
+    const to = message.toName ? `${message.toName} <${message.to}>` : message.to
 
-    console.log('[email] original to:', originalTo)
-    console.log('[email] sending to (forced):', to)
+    console.log('[email] to:', to)
     console.log('[email] from:', this.from)
 
     const { error } = await this.client.emails.send({
       from: this.from,
-      to,
+      to: message.to,
       subject: message.subject,
       html: message.html,
       replyTo: message.replyTo,
@@ -54,29 +50,42 @@ class ResendEmailService implements EmailService {
 }
 
 // ---------------------------------------------------------------------------
-// Factory — returns real Resend service when key is configured,
-// otherwise throws so callers can log the failure properly.
+// Factory — validates configuration and returns a Resend service.
+// Returns a service that throws a clear config error when misconfigured so
+// callers can surface the message appropriately:
+//   • session-notifications.ts  → marks notification record as 'failed'
+//   • invoices.ts               → returns error string to the UI
+//   • booking.ts                → Promise.allSettled (email failure is silent)
 // ---------------------------------------------------------------------------
 export function createEmailService(): EmailService {
   const apiKey = process.env.RESEND_API_KEY
-  const from = process.env.EMAIL_FROM ?? 'onboarding@resend.dev'
+  const from = process.env.EMAIL_FROM
 
-  console.log('[email] RESEND_API_KEY exists:', Boolean(apiKey))
-
-  if (apiKey) {
-    return new ResendEmailService(apiKey, from)
+  if (!apiKey) {
+    return {
+      async send(): Promise<void> {
+        throw new Error('RESEND_API_KEY is not configured. Add it to your environment variables.')
+      },
+    }
   }
 
-  // No key — return a service that throws with a clear message.
-  // Each caller already catches this and handles it appropriately:
-  //   • session-notifications.ts  → marks notification record as 'failed'
-  //   • invoices.ts               → returns error string to the UI
-  //   • booking.ts                → Promise.allSettled (email failure is silent)
-  return {
-    async send(): Promise<void> {
-      throw new Error('RESEND_API_KEY is not set in .env.local')
-    },
+  if (!from) {
+    return {
+      async send(): Promise<void> {
+        throw new Error('EMAIL_FROM is not configured. Set a verified sender address in your environment variables before sending emails.')
+      },
+    }
   }
+
+  if (from === 'onboarding@resend.dev') {
+    return {
+      async send(): Promise<void> {
+        throw new Error('EMAIL_FROM is set to the Resend sandbox address (onboarding@resend.dev). Configure a verified sender domain before sending emails to real recipients.')
+      },
+    }
+  }
+
+  return new ResendEmailService(apiKey, from)
 }
 
 // ---------------------------------------------------------------------------

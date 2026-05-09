@@ -29,10 +29,12 @@ export type ReportType =
   | 'custom'
 
 export type UserRole = 'practitioner' | 'admin'
+export type ClinicRole = 'admin' | 'practitioner' | 'receptionist' | 'finance'
+export type ClinicMemberStatus = 'pending' | 'active' | 'inactive'
 
 export type SessionStatus = 'scheduled' | 'completed' | 'cancelled'
 
-export type NotificationType = 'confirmation' | 'reminder'
+export type NotificationType = 'confirmation' | 'reminder' | 'update' | 'cancellation' | 'reminder_24h' | 'reminder_2h'
 export type NotificationStatus = 'pending' | 'sent' | 'failed'
 
 export type FundingType = 'NDIS' | 'Medicare' | 'Private / Other'
@@ -61,9 +63,27 @@ export interface PractitionerRow {
   display_name: string | null
   bio: string | null
   phone: string | null
+  provider_number: string | null
+  calendar_color: string
   timezone: string
   booking_page_slug: string | null
   is_accepting_clients: boolean
+  is_active: boolean
+  role: ClinicRole
+  created_at: string
+  updated_at: string
+}
+
+export interface ClinicMembershipRow {
+  id: string
+  clinic_id: string
+  member_id: string | null
+  role: ClinicRole
+  status: ClinicMemberStatus
+  is_active: boolean
+  invited_by: string | null
+  invited_email: string | null
+  invited_name: string | null
   created_at: string
   updated_at: string
 }
@@ -315,6 +335,9 @@ export interface FundingAllocationRow {
 // ---------------------------------------------------------------------------
 // Insert / Update types
 // ---------------------------------------------------------------------------
+export type InsertClinicMembership = Omit<ClinicMembershipRow, 'id' | 'created_at' | 'updated_at'>
+export type UpdateClinicMembership = Partial<Pick<ClinicMembershipRow, 'role' | 'is_active' | 'status'>>
+
 export type InsertUser = Omit<UserRow, 'created_at' | 'updated_at'>
 export type InsertPractitioner = Omit<PractitionerRow, 'id' | 'created_at' | 'updated_at'>
 export type InsertClient = Omit<ClientRow, 'id' | 'created_at' | 'updated_at'>
@@ -640,6 +663,27 @@ export interface Database {
             columns: ['client_id']
             isOneToOne: false
             referencedRelation: 'clients'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      clinic_memberships: {
+        Row: ClinicMembershipRow
+        Insert: InsertClinicMembership
+        Update: UpdateClinicMembership
+        Relationships: [
+          {
+            foreignKeyName: 'clinic_memberships_clinic_id_fkey'
+            columns: ['clinic_id']
+            isOneToOne: false
+            referencedRelation: 'practitioners'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'clinic_memberships_member_id_fkey'
+            columns: ['member_id']
+            isOneToOne: false
+            referencedRelation: 'practitioners'
             referencedColumns: ['id']
           }
         ]

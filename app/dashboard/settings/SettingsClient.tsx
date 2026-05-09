@@ -58,6 +58,7 @@ export default function SettingsClient({
   const router = useRouter()
 
   const [activeSection, setActiveSection] = useState<Section>('profile')
+  const [calendarColor, setCalendarColor] = useState(practitioner.calendar_color ?? '#6366F1')
   const [profileMsg, setProfileMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [orgMsg, setOrgMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [profilePending, startProfileTransition] = useTransition()
@@ -197,6 +198,45 @@ export default function SettingsClient({
                   className={INPUT}
                 />
               </div>
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Field
+                  label="Provider number"
+                  name="provider_number"
+                  defaultValue={practitioner.provider_number}
+                  placeholder="e.g. 2345678B"
+                />
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Calendar colour</label>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    {[
+                      '#6366F1', '#8B5CF6', '#EC4899', '#EF4444',
+                      '#F97316', '#EAB308', '#22C55E', '#06B6D4', '#3B82F6', '#64748B',
+                    ].map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        onClick={() => setCalendarColor(hex)}
+                        style={{ backgroundColor: hex }}
+                        className={`h-6 w-6 rounded-full transition-transform ${
+                          calendarColor === hex ? 'scale-125 ring-2 ring-offset-1 ring-gray-400' : 'hover:scale-110'
+                        }`}
+                        aria-label={hex}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      value={calendarColor}
+                      onChange={(e) => setCalendarColor(e.target.value)}
+                      className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                      title="Custom colour"
+                    />
+                  </div>
+                  <input type="hidden" name="calendar_color" value={calendarColor} />
+                  <p className="mt-1 text-xs text-gray-400">Used for your calendar events and team avatar.</p>
+                </div>
+              </div>
+
               {profileMsg && (
                 <p
                   className={`mt-3 text-sm ${profileMsg.ok ? 'text-green-600' : 'text-red-600'}`}

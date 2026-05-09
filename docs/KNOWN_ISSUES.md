@@ -29,8 +29,8 @@ Temporary `console.log` statements exist in `autoCreateDraftInvoice`, `completeS
 ### Migration 012 / 013 May Need Manual Execution
 Supabase migrations are not applied automatically in this project. If `invoice_audit_log` or `sessions` tables are missing, run migrations 012 and 013 manually in the Supabase SQL Editor.
 
-### Sandbox Email Override
-`lib/email.ts` may contain a sandbox recipient override from development. Review before deploying to production to ensure emails reach real recipients.
+### Sandbox Email Override (REMOVED)
+The forced sandbox recipient override has been removed from `lib/email.ts`. Emails now route to the actual recipient. `EMAIL_FROM` must be set to a verified sender domain — the factory throws a clear config error if it is missing or still set to `onboarding@resend.dev`.
 
 ### No Anthropic API Key
 The AI "Generate Professional Note" feature was removed for stability. If re-enabling it, add a real `ANTHROPIC_API_KEY` to `.env.local`.

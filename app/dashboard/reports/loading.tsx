@@ -6,53 +6,37 @@ function Bone({ className }: { className?: string }) {
 
 export default function ReportsLoading() {
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="space-y-5">
       <div className="space-y-1">
         <Bone className="h-7 w-24" />
-        <Bone className="h-4 w-48" />
+        <Bone className="h-4 w-64" />
       </div>
 
-      {/* Period filter buttons */}
+      {/* Period filter */}
       <div className="flex gap-2">
         {[0, 1, 2, 3].map((i) => (
           <Bone key={i} className="h-8 w-24" />
         ))}
       </div>
 
-      {/* KPI strip */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* Report cards */}
+      <div className="grid gap-4 sm:grid-cols-2">
         {[0, 1, 2, 3].map((i) => (
-          <Card key={i} padding="md" className="space-y-2">
-            <Bone className="h-3 w-20" />
-            <Bone className="h-8 w-24" />
-            <Bone className="h-3 w-28" />
+          <Card key={i} padding="md" className="flex flex-col gap-4">
+            <div className="space-y-1.5">
+              <Bone className="h-4 w-36" />
+              <Bone className="h-3 w-full" />
+              <Bone className="h-3 w-3/4" />
+            </div>
+            <div className="flex gap-1.5">
+              <Bone className="h-6 w-20" />
+              <Bone className="h-6 w-24" />
+            </div>
+            <div className="border-t border-gray-50 pt-1">
+              <Bone className="h-9 w-28" />
+            </div>
           </Card>
         ))}
-      </div>
-
-      {/* Chart card */}
-      <Card>
-        <Bone className="h-5 w-36 mb-4" />
-        <Bone className="h-36 w-full" />
-      </Card>
-
-      {/* Report cards */}
-      <div>
-        <Bone className="h-4 w-28 mb-3" />
-        <div className="grid gap-4 sm:grid-cols-2">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="animate-pulse rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-              <div className="flex items-start gap-4">
-                <Bone className="h-8 w-8 rounded-lg" />
-                <div className="flex-1 space-y-2">
-                  <Bone className="h-4 w-32" />
-                  <Bone className="h-3 w-48" />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   )

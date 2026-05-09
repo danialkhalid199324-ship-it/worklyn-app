@@ -7,16 +7,14 @@ export default function AuthLogo() {
   return (
     <div className="flex justify-center mb-6">
       <Link href="/">
-        <div className="bg-white p-4 rounded-xl shadow-sm inline-block">
-          <Image
-            src="/logo-auth-v2.png"
-            alt="Worklyn"
-            width={300}
-            height={100}
-            className="h-[100px] w-auto mx-auto"
-            priority
-          />
-        </div>
+        <Image
+          src="/logo-app.png"
+          alt="Worklyn"
+          width={160}
+          height={36}
+          className="h-[48px] w-auto"
+          priority
+        />
       </Link>
     </div>
   )

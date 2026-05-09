@@ -186,6 +186,57 @@ export function sessionReminderEmail(data: SessionEmailData): string {
   `)
 }
 
+export function sessionUpdateEmail(data: SessionEmailData): string {
+  return container(`
+    ${header('Session rescheduled')}
+    <tr>
+      <td style="padding:28px 32px;">
+        <p style="margin:0 0 20px; font-size:15px; color:#374151;">
+          Hi <strong>${data.recipientName}</strong>,<br/>
+          ${data.recipientName === data.clientName ? 'Your session' : `<strong>${data.clientName}</strong>'s session`}
+          with <strong>${data.businessName}</strong> has been updated. Here are the new details:
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+          ${row('Client', data.clientName)}
+          ${row('Date', data.date)}
+          ${row('Time', `${data.startTime} – ${data.endTime}`)}
+          ${row('Practitioner', data.practitionerName)}
+          ${data.location ? row('Location', data.location) : ''}
+        </table>
+        <p style="margin:0; font-size:13px; color:#6b7280;">
+          Questions? Contact us at
+          <a href="mailto:${data.practitionerEmail}" style="color:#0284c7;">${data.practitionerEmail}</a>.
+        </p>
+      </td>
+    </tr>
+  `)
+}
+
+export function sessionCancellationEmail(data: SessionEmailData): string {
+  return container(`
+    ${header('Session cancelled')}
+    <tr>
+      <td style="padding:28px 32px;">
+        <p style="margin:0 0 20px; font-size:15px; color:#374151;">
+          Hi <strong>${data.recipientName}</strong>,<br/>
+          ${data.recipientName === data.clientName ? 'Your session' : `<strong>${data.clientName}</strong>'s session`}
+          with <strong>${data.businessName}</strong> has been cancelled.
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+          ${row('Client', data.clientName)}
+          ${row('Date', data.date)}
+          ${row('Time', `${data.startTime} – ${data.endTime}`)}
+          ${row('Practitioner', data.practitionerName)}
+        </table>
+        <p style="margin:0; font-size:13px; color:#6b7280;">
+          To reschedule, contact us at
+          <a href="mailto:${data.practitionerEmail}" style="color:#0284c7;">${data.practitionerEmail}</a>.
+        </p>
+      </td>
+    </tr>
+  `)
+}
+
 // ---------------------------------------------------------------------------
 // Practitioner notification email
 // ---------------------------------------------------------------------------

@@ -10,6 +10,8 @@ export async function savePractitionerProfile(formData: FormData) {
   const practitioner = await getPractitionerByUserId(user.id)
   const supabase = await createServerSupabaseClient()
 
+  const calendarColor = (formData.get('calendar_color') as string)?.trim()
+
   const { error } = await supabase
     .from('practitioners')
     .update({
@@ -18,6 +20,8 @@ export async function savePractitionerProfile(formData: FormData) {
       display_name: (formData.get('display_name') as string)?.trim() || null,
       phone: (formData.get('phone') as string)?.trim() || null,
       bio: (formData.get('bio') as string)?.trim() || null,
+      provider_number: (formData.get('provider_number') as string)?.trim() || null,
+      ...(calendarColor && /^#[0-9A-Fa-f]{6}$/.test(calendarColor) ? { calendar_color: calendarColor } : {}),
     })
     .eq('id', practitioner.id)
 

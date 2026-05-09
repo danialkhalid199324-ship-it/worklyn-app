@@ -3,8 +3,10 @@ import type { ReactNode } from 'react'
 import Card from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId } from '@/lib/db'
+import { getPractitionerByUserId, getClients, getServices, getNdisPriceGuide, getOrgSettings } from '@/lib/db'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getNextInvoiceNumber } from '@/app/actions/invoices'
+import DashboardQuickActions from './DashboardQuickActions'
 
 export const metadata: Metadata = { title: 'Dashboard' }
 
@@ -74,6 +76,10 @@ export default async function DashboardPage() {
     availabilityRes,
     servicesRes,
     sessionsExistRes,
+    modalClients,
+    modalServices,
+    orgSettings,
+    nextInvoiceNumber,
   ] = await Promise.all([
     // Today's sessions (list, all non-cancelled)
     supabase.from('sessions')
@@ -129,7 +135,18 @@ export default async function DashboardPage() {
     supabase.from('availability_rules').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
     supabase.from('services').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
     supabase.from('sessions').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
+
+    // Quick-action modal data
+    getClients(pid),
+    getServices(pid),
+    getOrgSettings(pid),
+    getNextInvoiceNumber(pid),
   ])
+
+  const supportNums = Array.from(new Set(
+    modalServices.map(s => s.support_item_number).filter((n): n is string => n !== null),
+  ))
+  const priceGuide = await getNdisPriceGuide(supportNums)
 
   // ---------------------------------------------------------------------------
   // Types
@@ -197,40 +214,38 @@ export default async function DashboardPage() {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Overview</h1>
-          <p className="mt-0.5 text-sm text-gray-500">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
             {now.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
           </p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900">
+            Overview
+          </h1>
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          <a href="/dashboard/calendar" className="rounded-lg px-3.5 py-2 text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 transition-colors">
-            New appointment
-          </a>
-          <a href="/dashboard/clients" className="rounded-lg px-3.5 py-2 text-sm font-medium bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 transition-colors">
-            Add client
-          </a>
-          <a href="/dashboard/invoices" className="rounded-lg px-3.5 py-2 text-sm font-medium bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 transition-colors">
-            Create invoice
-          </a>
-        </div>
+        <DashboardQuickActions
+          clients={modalClients}
+          services={modalServices}
+          priceGuide={priceGuide}
+          nextInvoiceNumber={nextInvoiceNumber}
+          orgSettings={orgSettings}
+        />
       </div>
 
       {/* Stat cards */}
-      <div className="grid gap-3 grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={<CalIcon />}
           bg="bg-brand-50"
-          label="Appointments today"
+          label="Today's appointments"
           value={todaySessions.length.toString()}
-          valueColor="text-brand-600"
+          valueColor="text-brand-700"
           sub={
             overdueCount > 0
-              ? <span className="text-red-500">{overdueCount} overdue invoice{overdueCount !== 1 ? 's' : ''}</span>
+              ? <span className="font-medium text-red-500">{overdueCount} overdue invoice{overdueCount !== 1 ? 's' : ''}</span>
               : <span>{todaySessions.length === 0 ? 'Nothing scheduled' : `${todaySessions.length} session${todaySessions.length !== 1 ? 's' : ''}`}</span>
           }
         />
@@ -239,7 +254,7 @@ export default async function DashboardPage() {
           bg="bg-green-50"
           label="Active clients"
           value={activeClients.toString()}
-          valueColor="text-green-600"
+          valueColor="text-green-700"
           sub={<span>{activeClients === 0 ? 'No clients yet' : `${activeClients} active`}</span>}
         />
         <StatCard
@@ -247,10 +262,10 @@ export default async function DashboardPage() {
           bg="bg-amber-50"
           label="Pending invoices"
           value={pendingCents > 0 ? fmtAUD(pendingCents) : '$0'}
-          valueColor="text-amber-600"
+          valueColor={pendingCents > 0 ? 'text-amber-700' : 'text-gray-400'}
           sub={
             pendingCents === 0
-              ? <span>All clear</span>
+              ? <span className="font-medium text-green-600">All clear</span>
               : <span>
                   {[
                     overdueCount > 0 && `${overdueCount} overdue`,
@@ -265,49 +280,10 @@ export default async function DashboardPage() {
           bg="bg-purple-50"
           label="Revenue this month"
           value={revenueCents > 0 ? fmtAUD(revenueCents) : '$0'}
-          valueColor="text-purple-600"
+          valueColor={revenueCents > 0 ? 'text-purple-700' : 'text-gray-400'}
           sub={<span>{revenueCents === 0 ? 'No paid invoices yet' : `${revenuePaidCount} paid invoice${revenuePaidCount !== 1 ? 's' : ''}`}</span>}
         />
       </div>
-
-      {/* Needs attention strip — only rendered when there are items */}
-      {hasAttention && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-          <p className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-amber-700">Needs attention</p>
-          <div className="flex flex-wrap gap-2">
-            {overdueCount > 0 && (
-              <a href="/dashboard/invoices" className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors">
-                <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
-                {overdueCount} overdue invoice{overdueCount !== 1 ? 's' : ''}
-              </a>
-            )}
-            {missingNotesCount > 0 && (
-              <a href="/dashboard/sessions" className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                {missingNotesCount} session{missingNotesCount !== 1 ? 's' : ''} missing notes
-              </a>
-            )}
-            {draftCount > 0 && (
-              <a href="/dashboard/invoices" className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors">
-                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shrink-0" />
-                {draftCount} draft invoice{draftCount !== 1 ? 's' : ''} unsent
-              </a>
-            )}
-            {clientsMissingFunding > 0 && (
-              <a href="/dashboard/clients" className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 transition-colors">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                {clientsMissingFunding} client{clientsMissingFunding !== 1 ? 's' : ''} missing funding setup
-              </a>
-            )}
-            {fundingAlerts.length > 0 && (
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                {fundingAlerts.length} funding plan{fundingAlerts.length !== 1 ? 's' : ''} need attention
-              </span>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Main grid: today's schedule + action required */}
       <div className="grid gap-5 lg:grid-cols-3">
@@ -334,8 +310,8 @@ export default async function DashboardPage() {
                   ? `${s.clients.first_name[0]}${s.clients.last_name[0]}`
                   : '?'
                 return (
-                  <li key={s.id} className="flex items-center gap-3 py-2.5">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-semibold text-gray-600">
+                  <li key={s.id} className="flex items-center gap-3 py-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand-600 uppercase">
                       {initials}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -355,8 +331,8 @@ export default async function DashboardPage() {
 
           {upcomingSessions.length > 0 && (
             <>
-              <div className="mt-4 mb-3 flex items-center gap-2">
-                <p className="shrink-0 text-xs font-semibold uppercase tracking-wide text-gray-400">Coming up</p>
+              <div className="mt-5 mb-3 flex items-center gap-3">
+                <p className="shrink-0 text-xs font-semibold uppercase tracking-widest text-gray-400">Coming up</p>
                 <div className="flex-1 border-t border-gray-100" />
               </div>
               <ul className="divide-y divide-gray-50">
@@ -366,7 +342,7 @@ export default async function DashboardPage() {
                   const time = s.start_time ? s.start_time.slice(0, 5) : null
                   return (
                     <li key={s.id} className="flex items-center gap-3 py-2.5">
-                      <span className="w-20 shrink-0 text-xs text-gray-400">{dateLabel}</span>
+                      <span className="w-20 shrink-0 text-xs font-medium text-gray-400">{dateLabel}</span>
                       <div className="min-w-0 flex-1">
                         <a href={`/dashboard/clients/${s.client_id}`} className="text-sm font-medium text-gray-900 hover:text-brand-600 truncate block">
                           {name}
@@ -375,7 +351,7 @@ export default async function DashboardPage() {
                           <p className="text-xs text-gray-400 truncate">{s.services.name}</p>
                         )}
                       </div>
-                      {time && <span className="shrink-0 text-xs tabular-nums text-gray-500">{time}</span>}
+                      {time && <span className="shrink-0 text-xs tabular-nums font-medium text-gray-500">{time}</span>}
                     </li>
                   )
                 })}
@@ -397,16 +373,16 @@ export default async function DashboardPage() {
           <h2 className="mb-4 font-semibold text-gray-900">Action required</h2>
           {!hasAttention ? (
             <div className="flex flex-col items-center py-6 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-green-50">
                 <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="mt-3 text-sm font-medium text-gray-700">All clear</p>
+              <p className="mt-3 text-sm font-semibold text-gray-700">All clear</p>
               <p className="mt-1 text-xs text-gray-400">Nothing needs your attention.</p>
             </div>
           ) : (
-            <ul className="space-y-1.5">
+            <ul className="space-y-1">
               {overdueCount > 0 && (
                 <ActionItem
                   href="/dashboard/invoices"
@@ -529,129 +505,43 @@ export default async function DashboardPage() {
             />
           ) : clientsMissingFunding > 0 ? (
             <div className="space-y-3">
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-sm font-medium text-amber-800">
+                    <p className="text-sm font-semibold text-amber-800">
                       {clientsMissingFunding} client{clientsMissingFunding !== 1 ? 's' : ''} missing funding setup
                     </p>
                     <p className="mt-0.5 text-xs text-amber-600">
                       {clientsWithFunding} of {activeClients} client{activeClients !== 1 ? 's' : ''} have funding configured.
                     </p>
                   </div>
-                  <a href="/dashboard/clients" className="shrink-0 text-xs font-medium text-amber-700 hover:underline">
+                  <a href="/dashboard/clients" className="shrink-0 text-xs font-semibold text-amber-700 hover:underline">
                     Set up →
                   </a>
                 </div>
               </div>
               {fundingAlerts.length > 0 && (
-                <ul className="space-y-3">
-                  {fundingAlerts.map(p => {
-                    const clientName = p.clients
-                      ? `${p.clients.first_name} ${p.clients.last_name}`
-                      : 'Unknown client'
-                    const pct = Math.min(Math.round(Number(p.utilisation_percentage)), 100)
-                    const days = daysUntil(p.plan_end_date)
-                    const isExpiring = p.plan_end_date <= thirtyOutStr
-                    const barColor = pct >= 90 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-green-500'
-                    const pctColor  = pct >= 90 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-gray-600'
-                    return (
-                      <li key={p.id}>
-                        <a
-                          href={`/dashboard/clients/${p.client_id}`}
-                          className="group block rounded-lg p-3 hover:bg-gray-50 transition-colors -mx-3"
-                        >
-                          <div className="mb-2 flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate group-hover:text-brand-600">
-                                {clientName}
-                              </p>
-                              <p className="text-xs text-gray-400 truncate">{p.plan_name}</p>
-                            </div>
-                            <div className="flex shrink-0 flex-col items-end gap-1">
-                              {isExpiring && (
-                                <Badge color={days <= 7 ? 'red' : 'amber'}>
-                                  {days <= 0 ? 'Expired' : `${days}d left`}
-                                </Badge>
-                              )}
-                              <span className={`text-xs font-semibold tabular-nums ${pctColor}`}>
-                                {pct}%
-                              </span>
-                            </div>
-                          </div>
-                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
-                          </div>
-                          <p className="mt-1.5 text-xs text-gray-400">
-                            {fmtAUD(p.remaining_amount)} remaining · expires{' '}
-                            {new Date(`${p.plan_end_date}T12:00:00`).toLocaleDateString('en-AU', {
-                              day: 'numeric', month: 'short', year: 'numeric',
-                            })}
-                          </p>
-                        </a>
-                      </li>
-                    )
-                  })}
+                <ul className="space-y-2.5">
+                  {fundingAlerts.map(p => (
+                    <FundingPlanRow key={p.id} p={p} thirtyOutStr={thirtyOutStr} />
+                  ))}
                 </ul>
               )}
             </div>
           ) : fundingAlerts.length > 0 ? (
-            <ul className="space-y-3">
-              {fundingAlerts.map(p => {
-                const clientName = p.clients
-                  ? `${p.clients.first_name} ${p.clients.last_name}`
-                  : 'Unknown client'
-                const pct = Math.min(Math.round(Number(p.utilisation_percentage)), 100)
-                const days = daysUntil(p.plan_end_date)
-                const isExpiring = p.plan_end_date <= thirtyOutStr
-                const barColor = pct >= 90 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-green-500'
-                const pctColor  = pct >= 90 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-gray-600'
-                return (
-                  <li key={p.id}>
-                    <a
-                      href={`/dashboard/clients/${p.client_id}`}
-                      className="group block rounded-lg p-3 hover:bg-gray-50 transition-colors -mx-3"
-                    >
-                      <div className="mb-2 flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate group-hover:text-brand-600">
-                            {clientName}
-                          </p>
-                          <p className="text-xs text-gray-400 truncate">{p.plan_name}</p>
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          {isExpiring && (
-                            <Badge color={days <= 7 ? 'red' : 'amber'}>
-                              {days <= 0 ? 'Expired' : `${days}d left`}
-                            </Badge>
-                          )}
-                          <span className={`text-xs font-semibold tabular-nums ${pctColor}`}>
-                            {pct}%
-                          </span>
-                        </div>
-                      </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
-                      </div>
-                      <p className="mt-1.5 text-xs text-gray-400">
-                        {fmtAUD(p.remaining_amount)} remaining · expires{' '}
-                        {new Date(`${p.plan_end_date}T12:00:00`).toLocaleDateString('en-AU', {
-                          day: 'numeric', month: 'short', year: 'numeric',
-                        })}
-                      </p>
-                    </a>
-                  </li>
-                )
-              })}
+            <ul className="space-y-2.5">
+              {fundingAlerts.map(p => (
+                <FundingPlanRow key={p.id} p={p} thirtyOutStr={thirtyOutStr} />
+              ))}
             </ul>
           ) : (
             <div className="flex flex-col items-center py-6 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-green-50">
                 <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="mt-3 text-sm font-medium text-gray-700">All plans within budget</p>
+              <p className="mt-3 text-sm font-semibold text-gray-700">All plans within budget</p>
               <p className="mt-1 text-xs text-gray-400">
                 {allActivePlans.length} active plan{allActivePlans.length !== 1 ? 's' : ''} tracked.
               </p>
@@ -663,7 +553,21 @@ export default async function DashboardPage() {
       {/* Getting started — hidden once all setup steps are done */}
       {!checklistDone && (
         <Card padding="md">
-          <h2 className="mb-4 font-semibold text-gray-900">Getting started</h2>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Getting started</h2>
+            <span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-600">
+              {[hasClient, hasAvailability, hasService, hasSession].filter(Boolean).length} / 4 complete
+            </span>
+          </div>
+
+          {/* Progress bar */}
+          <div className="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+            <div
+              className="h-full rounded-full bg-brand-600 transition-all"
+              style={{ width: `${([hasClient, hasAvailability, hasService, hasSession].filter(Boolean).length / 4) * 100}%` }}
+            />
+          </div>
+
           <ul className="space-y-3">
             {[
               { done: hasClient,       label: 'Add your first client',      href: '/dashboard/clients' },
@@ -672,14 +576,17 @@ export default async function DashboardPage() {
               { done: hasSession,      label: 'Book your first appointment', href: '/dashboard/calendar' },
             ].map(item => (
               <li key={item.label} className="flex items-center gap-3">
-                <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${item.done ? 'border-green-500 bg-green-500' : 'border-gray-300'}`}>
+                <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${item.done ? 'border-green-500 bg-green-500' : 'border-gray-300'}`}>
                   {item.done && (
                     <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                     </svg>
                   )}
                 </div>
-                <a href={item.href} className="text-sm text-gray-600 hover:text-brand-600 hover:underline">
+                <a
+                  href={item.href}
+                  className={`text-sm transition-colors ${item.done ? 'text-gray-400 line-through pointer-events-none' : 'text-gray-700 hover:text-brand-600 hover:underline'}`}
+                >
                   {item.label}
                 </a>
               </li>
@@ -692,6 +599,68 @@ export default async function DashboardPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Shared sub-component for funding plan rows (deduplicates two identical blocks)
+// ---------------------------------------------------------------------------
+
+function FundingPlanRow({
+  p,
+  thirtyOutStr,
+}: {
+  p: {
+    id: string; plan_name: string; plan_end_date: string
+    remaining_amount: number; utilisation_percentage: number
+    client_id: string
+    clients: { id: string; first_name: string; last_name: string } | null
+  }
+  thirtyOutStr: string
+}) {
+  const clientName = p.clients
+    ? `${p.clients.first_name} ${p.clients.last_name}`
+    : 'Unknown client'
+  const pct = Math.min(Math.round(Number(p.utilisation_percentage)), 100)
+  const days = daysUntil(p.plan_end_date)
+  const isExpiring = p.plan_end_date <= thirtyOutStr
+  const barColor = pct >= 90 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-green-500'
+  const pctColor  = pct >= 90 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-gray-600'
+  return (
+    <li>
+      <a
+        href={`/dashboard/clients/${p.client_id}`}
+        className="group block rounded-xl border border-gray-100 p-3 hover:border-brand-200 hover:bg-gray-50 transition-all"
+      >
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900 truncate group-hover:text-brand-600">
+              {clientName}
+            </p>
+            <p className="text-xs text-gray-400 truncate">{p.plan_name}</p>
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            {isExpiring && (
+              <Badge color={days <= 7 ? 'red' : 'amber'}>
+                {days <= 0 ? 'Expired' : `${days}d left`}
+              </Badge>
+            )}
+            <span className={`text-xs font-semibold tabular-nums ${pctColor}`}>
+              {pct}%
+            </span>
+          </div>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+          <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+        <p className="mt-1.5 text-xs text-gray-400">
+          {fmtAUD(p.remaining_amount)} remaining · expires{' '}
+          {new Date(`${p.plan_end_date}T12:00:00`).toLocaleDateString('en-AU', {
+            day: 'numeric', month: 'short', year: 'numeric',
+          })}
+        </p>
+      </a>
+    </li>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Local helper components
 // ---------------------------------------------------------------------------
 
@@ -699,11 +668,11 @@ function StatCard({ icon, bg, label, value, valueColor, sub }: {
   icon: ReactNode; bg: string; label: string; value: string; valueColor: string; sub: ReactNode
 }) {
   return (
-    <Card padding="md" className="flex items-start gap-4">
+    <Card padding="md" className="flex items-start gap-3">
       <div className={`rounded-xl p-2.5 ${bg} shrink-0`}>{icon}</div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-gray-500 truncate">{label}</p>
-        <p className={`mt-0.5 text-2xl font-bold ${valueColor}`}>{value}</p>
+        <p className="text-xs font-medium text-gray-500">{label}</p>
+        <p className={`mt-0.5 text-2xl font-bold tracking-tight sm:text-3xl ${valueColor}`}>{value}</p>
         <div className="mt-0.5 text-xs text-gray-400 truncate">{sub}</div>
       </div>
     </Card>

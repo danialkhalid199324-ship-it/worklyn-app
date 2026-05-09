@@ -2,10 +2,14 @@
  * Safe session notification sender.
  *
  * Behaviour:
- *  1. Creates a 'pending' record in session_notifications.
- *  2. Attempts to send via whatever email provider is configured
- *     (Resend in production, console logger in dev — never crashes).
- *  3. Updates the record to 'sent' or 'failed' with any error message.
+ *  1. For 'confirmation' type: skips silently if a sent confirmation already
+ *     exists for this session (duplicate-send guard).
+ *  2. Creates a 'pending' record in session_notifications.
+ *  3. Attempts to send via the configured email provider.
+ *  4. Updates the record to 'sent' or 'failed'.
+ *
+ * Accepts an optional dbClient so the reminder endpoint (which has no auth
+ * cookies) can pass the admin client instead of the cookie-based server client.
  *
  * The caller should always await this; it never throws.
  */
@@ -13,7 +17,12 @@
 import { createServerSupabaseClient } from './supabase-server'
 import { getClientById, getOrgSettings } from './db'
 import { createEmailService } from './email'
-import { sessionConfirmationEmail, sessionReminderEmail } from './email-templates'
+import {
+  sessionConfirmationEmail,
+  sessionUpdateEmail,
+  sessionCancellationEmail,
+  sessionReminderEmail,
+} from './email-templates'
 import type { NotificationType, PractitionerRow, SessionRow } from '@/types/database'
 
 // ── Date / time helpers ───────────────────────────────────────────────────────
@@ -48,6 +57,54 @@ function deriveEndDisplay(session: SessionRow): string {
   return 'TBD'
 }
 
+// ── Subject / HTML selection ──────────────────────────────────────────────────
+
+function buildEmail(type: NotificationType, emailData: {
+  clientName: string
+  recipientName: string
+  businessName: string
+  practitionerName: string
+  practitionerEmail: string
+  date: string
+  startTime: string
+  endTime: string
+  location: string | null
+}): { subject: string; html: string } {
+  switch (type) {
+    case 'confirmation':
+      return {
+        subject: `Session confirmed — ${emailData.date}`,
+        html: sessionConfirmationEmail(emailData),
+      }
+    case 'update':
+      return {
+        subject: `Session rescheduled — ${emailData.date}`,
+        html: sessionUpdateEmail(emailData),
+      }
+    case 'cancellation':
+      return {
+        subject: `Session cancelled — ${emailData.date}`,
+        html: sessionCancellationEmail(emailData),
+      }
+    case 'reminder_24h':
+      return {
+        subject: `Session reminder — tomorrow, ${emailData.date}`,
+        html: sessionReminderEmail(emailData),
+      }
+    case 'reminder_2h':
+      return {
+        subject: `Session reminder — today at ${emailData.startTime}`,
+        html: sessionReminderEmail(emailData),
+      }
+    default:
+      // 'reminder' and any future legacy types
+      return {
+        subject: `Session reminder — ${emailData.date}`,
+        html: sessionReminderEmail(emailData),
+      }
+  }
+}
+
 // ── Core send function ────────────────────────────────────────────────────────
 
 export async function sendSessionNotification(
@@ -55,14 +112,30 @@ export async function sendSessionNotification(
   practitioner: PractitionerRow,
   practitionerEmail: string,
   type: NotificationType,
+  // Accepts the admin client from the reminder endpoint (no auth cookies there).
+  // Falls back to the cookie-based server client in normal server action calls.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dbClient?: any,
 ): Promise<void> {
-  const supabase = await createServerSupabaseClient()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase: any = dbClient !== undefined ? dbClient : await createServerSupabaseClient()
+
+  // Duplicate-send guard: skip if a sent confirmation already exists for this session.
+  if (type === 'confirmation') {
+    const { data: existing } = await supabase
+      .from('session_notifications')
+      .select('id')
+      .eq('session_id', session.id)
+      .eq('type', 'confirmation')
+      .eq('status', 'sent')
+      .limit(1)
+    if (existing && existing.length > 0) return
+  }
 
   let recipientEmail: string | null = null
   let recipientName = 'Client'
   let clientName = 'Client'
 
-  // Fetch client and resolve recipient (guardian takes priority over client)
   try {
     const client = await getClientById(practitioner.id, session.client_id)
     clientName = `${client.first_name} ${client.last_name}`
@@ -78,7 +151,6 @@ export async function sendSessionNotification(
     console.error('[session-notifications] could not fetch client:', err)
   }
 
-  // Always write a record so the practitioner can see the attempt
   const { data: notif, error: insertErr } = await supabase
     .from('session_notifications')
     .insert({
@@ -99,7 +171,6 @@ export async function sendSessionNotification(
     return
   }
 
-  // No address — mark failed immediately
   if (!recipientEmail) {
     await supabase
       .from('session_notifications')
@@ -108,7 +179,6 @@ export async function sendSessionNotification(
     return
   }
 
-  // Build email
   let orgSettings = null
   try { orgSettings = await getOrgSettings(practitioner.id) } catch { /* non-fatal */ }
 
@@ -127,17 +197,8 @@ export async function sendSessionNotification(
     location: null,
   }
 
-  const subject =
-    type === 'confirmation'
-      ? `Session confirmed — ${emailData.date}`
-      : `Session reminder — ${emailData.date}`
+  const { subject, html } = buildEmail(type, emailData)
 
-  const html =
-    type === 'confirmation'
-      ? sessionConfirmationEmail(emailData)
-      : sessionReminderEmail(emailData)
-
-  // Attempt send (createEmailService never throws — falls back to console logger)
   let status: 'sent' | 'failed' = 'sent'
   let errorMessage: string | null = null
 

@@ -417,7 +417,7 @@ export async function updateSession(sessionId: string, formData: FormData) {
   // Explicit lock check — session notes and details are immutable once invoiced
   const { data: existing } = await supabase
     .from('sessions')
-    .select('invoice_id, client_id, status')
+    .select('invoice_id, client_id, status, service_date, start_time, end_time')
     .eq('id', sessionId)
     .eq('practitioner_id', practitioner.id)
     .single()
@@ -469,7 +469,7 @@ export async function updateSession(sessionId: string, formData: FormData) {
     .eq('id', sessionId)
     .eq('practitioner_id', practitioner.id)
     .is('invoice_id', null) // prevent editing already-invoiced sessions
-    .select('id')
+    .select('*')
 
   if (error) return { error: error.message }
 
@@ -482,6 +482,25 @@ export async function updateSession(sessionId: string, formData: FormData) {
       console.error('[updateSession] auto-invoice threw:', err)
     }
     revalidatePath('/dashboard/invoices')
+  }
+
+  // Send update notification when meaningful scheduling fields changed and session stays scheduled
+  const schedulingChanged = (
+    serviceDate !== existing.service_date ||
+    startTime !== existing.start_time ||
+    endTime !== existing.end_time
+  )
+  if (newStatus === 'scheduled' && schedulingChanged && updated && updated.length > 0) {
+    try {
+      await sendSessionNotification(
+        updated[0] as unknown as import('@/types/database').SessionRow,
+        practitioner,
+        user.email ?? '',
+        'update',
+      )
+    } catch (err) {
+      console.error('[sessions] update email failed:', err)
+    }
   }
 
   revalidatePath('/dashboard/sessions')
@@ -529,7 +548,7 @@ export async function cancelSession(sessionId: string) {
 
   const { data: existing } = await supabase
     .from('sessions')
-    .select('invoice_id, client_id, status')
+    .select('invoice_id, client_id, status, service_date, start_time, end_time, duration_minutes')
     .eq('id', sessionId)
     .eq('practitioner_id', practitioner.id)
     .single()
@@ -545,6 +564,18 @@ export async function cancelSession(sessionId: string) {
     .is('invoice_id', null)
 
   if (error) return { error: error.message }
+
+  // Send cancellation notification — never blocks the action
+  try {
+    await sendSessionNotification(
+      { ...existing, id: sessionId } as unknown as import('@/types/database').SessionRow,
+      practitioner,
+      user.email ?? '',
+      'cancellation',
+    )
+  } catch (err) {
+    console.error('[sessions] cancellation email failed:', err)
+  }
 
   revalidatePath('/dashboard/sessions')
   revalidatePath('/dashboard/calendar')
