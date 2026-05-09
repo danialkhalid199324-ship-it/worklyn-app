@@ -223,9 +223,14 @@ export default function InvoiceDetailClient({ invoice, orgSettings, practitioner
           <div>
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Client</p>
             {invoice.clients && (
-              <p className="font-semibold text-gray-900">
-                {invoice.clients.first_name} {invoice.clients.last_name}
-              </p>
+              <>
+                <p className="font-semibold text-gray-900">
+                  {invoice.clients.first_name} {invoice.clients.last_name}
+                </p>
+                {invoice.clients.ndis_number && (
+                  <p className="text-sm text-gray-500">NDIS: {invoice.clients.ndis_number}</p>
+                )}
+              </>
             )}
             <div className="mt-3">
               <p className="mb-0.5 text-xs font-semibold uppercase tracking-wide text-gray-400">Due</p>

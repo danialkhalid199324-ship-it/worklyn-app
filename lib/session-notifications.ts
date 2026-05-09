@@ -171,6 +171,12 @@ export async function sendSessionNotification(
     return
   }
 
+  console.log(
+    `[session-notifications] type=${type} session=${session.id}`,
+    `| recipient=${recipientEmail ?? 'NONE'} name="${recipientName}"`,
+    `| client_id=${session.client_id}`,
+  )
+
   if (!recipientEmail) {
     await supabase
       .from('session_notifications')

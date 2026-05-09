@@ -39,5 +39,20 @@ export async function sendSessionReminder(
     return { error: err instanceof Error ? err.message : 'Failed to send reminder.' }
   }
 
+  // sendSessionNotification never throws — it logs failures internally and marks
+  // the DB record as 'failed'. Check the record to surface the real outcome.
+  const { data: notif } = await supabase
+    .from('session_notifications')
+    .select('status, error_message')
+    .eq('session_id', sessionId)
+    .eq('type', 'reminder')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (notif?.status === 'failed') {
+    return { error: notif.error_message ?? 'Failed to send reminder.' }
+  }
+
   return { success: true }
 }

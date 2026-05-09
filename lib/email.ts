@@ -11,6 +11,7 @@ export interface EmailMessage {
   subject: string
   html: string
   replyTo?: string
+  attachments?: Array<{ filename: string; content: Buffer; content_type?: string }>
 }
 
 export interface EmailService {
@@ -35,17 +36,19 @@ class ResendEmailService implements EmailService {
     console.log('[email] to:', to)
     console.log('[email] from:', this.from)
 
-    const { error } = await this.client.emails.send({
+    const { data, error } = await this.client.emails.send({
       from: this.from,
       to: message.to,
       subject: message.subject,
       html: message.html,
       replyTo: message.replyTo,
+      attachments: message.attachments,
     })
 
     if (error) {
       throw new Error(`Resend: ${error.message}`)
     }
+    console.log('[email] Resend accepted | id:', data?.id ?? 'unknown')
   }
 }
 

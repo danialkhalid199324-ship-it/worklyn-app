@@ -4,6 +4,7 @@ import {
   Text,
   View,
   StyleSheet,
+  renderToBuffer,
 } from '@react-pdf/renderer'
 import type { InvoiceRow, InvoiceItemRow, ClientRow, OrgSettingsRow } from '@/types/database'
 import { recipientLabel } from '@/lib/invoice-routing'
@@ -67,6 +68,11 @@ interface Props {
   orgSettings: OrgSettingsRow | null
 }
 
+export async function generateInvoicePdfBuffer(invoice: Props['invoice'], orgSettings: Props['orgSettings']): Promise<Buffer> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return renderToBuffer(<InvoicePdfDocument invoice={invoice} orgSettings={orgSettings} /> as any) as Promise<Buffer>
+}
+
 export function InvoicePdfDocument({ invoice, orgSettings }: Props) {
   const payRef = orgSettings?.payment_reference_prefix
     ? `${orgSettings.payment_reference_prefix}-${invoice.invoice_number}`
@@ -118,7 +124,32 @@ export function InvoicePdfDocument({ invoice, orgSettings }: Props) {
           <View style={styles.billBox}>
             <Text style={styles.sectionLabel}>Client</Text>
             {invoice.clients && (
-              <Text style={styles.billName}>{invoice.clients.first_name} {invoice.clients.last_name}</Text>
+              <>
+                <Text style={styles.billName}>{invoice.clients.first_name} {invoice.clients.last_name}</Text>
+                {invoice.clients.ndis_number && (
+                  <Text style={styles.billDetail}>NDIS: {invoice.clients.ndis_number}</Text>
+                )}
+                {invoice.clients.email && (
+                  <Text style={styles.billDetail}>{invoice.clients.email}</Text>
+                )}
+                {invoice.clients.phone && (
+                  <Text style={styles.billDetail}>{invoice.clients.phone}</Text>
+                )}
+                {invoice.clients.self_manager_name && (
+                  <>
+                    <Text style={[styles.sectionLabel, { marginTop: 8 }]}>
+                      {invoice.clients.self_manager_relation ?? 'Guardian / Contact'}
+                    </Text>
+                    <Text style={styles.billDetail}>{invoice.clients.self_manager_name}</Text>
+                    {invoice.clients.self_manager_email && (
+                      <Text style={styles.billDetail}>{invoice.clients.self_manager_email}</Text>
+                    )}
+                    {invoice.clients.self_manager_phone && (
+                      <Text style={styles.billDetail}>{invoice.clients.self_manager_phone}</Text>
+                    )}
+                  </>
+                )}
+              </>
             )}
           </View>
         </View>

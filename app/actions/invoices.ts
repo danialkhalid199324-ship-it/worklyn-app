@@ -6,6 +6,7 @@ import { requireAuth } from '@/lib/auth'
 import { getPractitionerByUserId, getClientById, getInvoiceById, getOrgSettings } from '@/lib/db'
 import { resolveInvoiceRecipient } from '@/lib/invoice-routing'
 import { sendEmail } from '@/lib/email'
+import { generateInvoicePdfBuffer } from '@/lib/invoice-pdf'
 
 interface LineItemInput {
   description: string
@@ -204,12 +205,22 @@ export async function sendInvoice(invoiceId: string) {
     </div>
   `
 
+  let pdfBuffer: Buffer | undefined
+  try {
+    pdfBuffer = await generateInvoicePdfBuffer(invoice, orgSettings)
+  } catch {
+    // PDF generation failure is non-fatal — send email without attachment
+  }
+
   try {
     await sendEmail({
       to: invoice.recipient_email,
       toName: invoice.recipient_name ?? undefined,
       subject: `Invoice ${invoice.invoice_number} from ${businessName} — ${total} due ${dueDate}`,
       html,
+      attachments: pdfBuffer
+        ? [{ filename: `${invoice.invoice_number}.pdf`, content: pdfBuffer, content_type: 'application/pdf' }]
+        : undefined,
     })
   } catch (err) {
     return { error: `Failed to send email: ${err instanceof Error ? err.message : 'Unknown error'}` }

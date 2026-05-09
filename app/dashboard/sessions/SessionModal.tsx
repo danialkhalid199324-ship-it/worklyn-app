@@ -75,6 +75,7 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
   const [deletePending, startDeleteTransition] = useTransition()
   const [reminderPending, startReminderTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [reminderSuccess, setReminderSuccess] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
 
   // Auto-calculate duration from start/end times
@@ -314,14 +315,15 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
   function handleReminder() {
     if (!session) return
     setError(null)
+    setReminderSuccess(false)
     startReminderTransition(async () => {
       const result = await sendSessionReminder(session.id)
+      const fresh = await fetchSessionNotifications(session.id)
+      setNotifications(fresh)
       if ('error' in result) {
         setError(result.error ?? null)
       } else {
-        // Reload notification list to show the new record
-        const fresh = await fetchSessionNotifications(session.id)
-        setNotifications(fresh)
+        setReminderSuccess(true)
       }
     })
   }
@@ -630,6 +632,12 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
                   </ul>
                 )}
               </div>
+            )}
+
+            {reminderSuccess && (
+              <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                Reminder sent successfully.
+              </p>
             )}
 
             {error && (
