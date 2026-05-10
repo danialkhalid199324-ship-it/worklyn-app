@@ -48,7 +48,10 @@ class ResendEmailService implements EmailService {
     if (error) {
       throw new Error(`Resend: ${error.message}`)
     }
-    console.log('[email] Resend accepted | id:', data?.id ?? 'unknown')
+    if (!data?.id) {
+      throw new Error('Resend did not return a message ID — check API key and sender domain configuration.')
+    }
+    console.log('[email] Resend accepted | id:', data.id)
   }
 }
 

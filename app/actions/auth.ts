@@ -56,12 +56,47 @@ export async function signup(formData: FormData) {
       redirect(`/auth/signup?error=${encodeURIComponent(`Failed to create user record: ${userErr.message}`)}`)
     }
 
-    const { error: practErr } = await admin.from('practitioners').upsert(
+    const { data: newPract, error: practErr } = await admin.from('practitioners').upsert(
       { user_id: data.user.id, first_name: firstName, last_name: lastName },
       { onConflict: 'user_id' },
-    )
+    ).select('id').single()
     if (practErr) {
       redirect(`/auth/signup?error=${encodeURIComponent(`Failed to create practitioner record: ${practErr.message}`)}`)
+    }
+
+    // Activate any pending clinic invites that match the signed-up email.
+    if (newPract?.id) {
+      try {
+        const normalizedEmail = email.toLowerCase()
+        const { data: pending } = await admin
+          .from('clinic_memberships')
+          .select('id, role')
+          .eq('invited_email', normalizedEmail)
+          .eq('status', 'pending')
+
+        if (pending && pending.length > 0) {
+          await admin
+            .from('clinic_memberships')
+            .update({ status: 'active', is_active: true, member_id: newPract.id })
+            .eq('invited_email', normalizedEmail)
+            .eq('status', 'pending')
+
+          // Mirror the invite role (prefer admin if any invite grants it)
+          const inviteRole: string =
+            pending.find((i: { role: string }) => i.role === 'admin')?.role ?? pending[0].role
+          if (inviteRole) {
+            await admin.from('practitioners').update({ role: inviteRole }).eq('id', newPract.id)
+          }
+
+          console.log(
+            `[signup] activated ${pending.length} pending invite(s) for ${normalizedEmail}`,
+            `| practitioner=${newPract.id} role=${inviteRole ?? 'unchanged'}`,
+          )
+        }
+      } catch (err) {
+        // Non-fatal — signup still succeeds even if invite activation fails
+        console.error('[signup] invite activation failed:', err)
+      }
     }
   }
 

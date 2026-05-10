@@ -40,7 +40,7 @@ function container(content: string) {
           ${content}
         </table>
         <p style="margin-top:24px; font-size:12px; color:#9ca3af;">
-          Sent by <a href="${process.env.NEXT_PUBLIC_APP_URL}" style="color:#0284c7;">PractitionerApp</a>
+          Sent by <a href="${process.env.NEXT_PUBLIC_APP_URL}" style="color:#6366f1;">Worklyn</a>
         </p>
       </td>
     </tr>
@@ -52,9 +52,9 @@ function container(content: string) {
 function header(title: string) {
   return `
   <tr>
-    <td style="background:#0284c7; padding:28px 32px;">
-      <p style="margin:0; color:#bae6fd; font-size:13px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">
-        PractitionerApp
+    <td style="background:#6366f1; padding:28px 32px;">
+      <p style="margin:0; color:#c7d2fe; font-size:13px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">
+        Worklyn
       </p>
       <h1 style="margin:8px 0 0; color:#ffffff; font-size:22px; font-weight:700;">${title}</h1>
     </td>
@@ -132,6 +132,7 @@ export interface SessionEmailData {
   startTime: string        // "9:00 AM"
   endTime: string          // "10:00 AM"
   location: string | null
+  serviceName?: string | null
 }
 
 export function sessionConfirmationEmail(data: SessionEmailData): string {
@@ -146,6 +147,7 @@ export function sessionConfirmationEmail(data: SessionEmailData): string {
         </p>
         <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
           ${row('Client', data.clientName)}
+          ${data.serviceName ? row('Service', data.serviceName) : ''}
           ${row('Date', data.date)}
           ${row('Time', `${data.startTime} – ${data.endTime}`)}
           ${row('Practitioner', data.practitionerName)}
@@ -153,7 +155,7 @@ export function sessionConfirmationEmail(data: SessionEmailData): string {
         </table>
         <p style="margin:0; font-size:13px; color:#6b7280;">
           Questions? Contact us at
-          <a href="mailto:${data.practitionerEmail}" style="color:#0284c7;">${data.practitionerEmail}</a>.
+          <a href="mailto:${data.practitionerEmail}" style="color:#6366f1;">${data.practitionerEmail}</a>.
         </p>
       </td>
     </tr>
@@ -172,6 +174,7 @@ export function sessionReminderEmail(data: SessionEmailData): string {
         </p>
         <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
           ${row('Client', data.clientName)}
+          ${data.serviceName ? row('Service', data.serviceName) : ''}
           ${row('Date', data.date)}
           ${row('Time', `${data.startTime} – ${data.endTime}`)}
           ${row('Practitioner', data.practitionerName)}
@@ -179,7 +182,7 @@ export function sessionReminderEmail(data: SessionEmailData): string {
         </table>
         <p style="margin:0; font-size:13px; color:#6b7280;">
           Need to reschedule? Contact us at
-          <a href="mailto:${data.practitionerEmail}" style="color:#0284c7;">${data.practitionerEmail}</a>.
+          <a href="mailto:${data.practitionerEmail}" style="color:#6366f1;">${data.practitionerEmail}</a>.
         </p>
       </td>
     </tr>

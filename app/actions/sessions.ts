@@ -391,13 +391,21 @@ export async function createSession(formData: FormData) {
   // Send confirmation email for scheduled sessions — never blocks or fails the action.
   if (sessionStatus === 'scheduled' && newSession) {
     try {
-      const user = await requireAuth()
-      await sendSessionNotification(
+      const notifResult = await sendSessionNotification(
         newSession as unknown as import('@/types/database').SessionRow,
         practitioner,
         user.email ?? '',
         'confirmation',
       )
+      if (notifResult.noRecipient) {
+        revalidatePath('/dashboard/sessions')
+        revalidatePath('/dashboard/calendar')
+        revalidatePath(`/dashboard/clients/${clientId}`)
+        return {
+          success: true as const,
+          confirmationWarning: 'Session saved, but no confirmation email sent because no client/guardian email is available.',
+        }
+      }
     } catch (err) {
       console.error('[sessions] confirmation email failed:', err)
     }

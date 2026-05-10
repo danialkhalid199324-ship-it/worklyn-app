@@ -121,6 +121,16 @@ const navGroups = [
           </svg>
         ),
       },
+      {
+        href: '/dashboard/about',
+        label: 'About Worklyn',
+        icon: (
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
+              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+      },
     ],
   },
 ]
@@ -190,6 +200,12 @@ export default function DashboardSidebar() {
           </svg>
           Help & Support
         </a>
+      </div>
+
+      {/* Founder branding */}
+      <div className="border-t border-gray-100 px-5 pb-5 pt-3">
+        <p className="text-[11px] font-medium leading-tight text-gray-400">Worklyn&#8482;</p>
+        <p className="mt-0.5 text-[11px] leading-tight text-gray-300">Developed by Danial Khalid</p>
       </div>
     </aside>
   )

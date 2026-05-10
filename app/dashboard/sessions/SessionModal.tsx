@@ -75,6 +75,7 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
   const [deletePending, startDeleteTransition] = useTransition()
   const [reminderPending, startReminderTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [confirmationWarning, setConfirmationWarning] = useState<string | null>(null)
   const [reminderSuccess, setReminderSuccess] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
 
@@ -293,7 +294,11 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
         setError(result.error ?? null)
       } else {
         router.refresh()
-        onClose()
+        if ('confirmationWarning' in result && result.confirmationWarning) {
+          setConfirmationWarning(result.confirmationWarning as string)
+        } else {
+          onClose()
+        }
       }
     })
   }
@@ -638,6 +643,19 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
               <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
                 Reminder sent successfully.
               </p>
+            )}
+
+            {confirmationWarning && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <p>{confirmationWarning}</p>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="mt-2 font-medium underline"
+                >
+                  Close
+                </button>
+              </div>
             )}
 
             {error && (

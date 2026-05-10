@@ -14,7 +14,7 @@
  * The caller should always await this; it never throws.
  */
 
-import { createServerSupabaseClient } from './supabase-server'
+import { createAdminClient } from './supabase-server'
 import { getClientById, getOrgSettings } from './db'
 import { createEmailService } from './email'
 import {
@@ -69,6 +69,7 @@ function buildEmail(type: NotificationType, emailData: {
   startTime: string
   endTime: string
   location: string | null
+  serviceName?: string | null
 }): { subject: string; html: string } {
   switch (type) {
     case 'confirmation':
@@ -116,9 +117,13 @@ export async function sendSessionNotification(
   // Falls back to the cookie-based server client in normal server action calls.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dbClient?: any,
-): Promise<void> {
+): Promise<{ sent: boolean; noRecipient: boolean; error?: string }> {
+  // Use admin client by default: the cookie-based server client cannot reliably
+  // propagate the JWT through nested async calls, causing RLS to block the
+  // session_notifications INSERT. All DB ops here are already scoped by the
+  // authenticated practitioner object passed from the caller.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const supabase: any = dbClient !== undefined ? dbClient : await createServerSupabaseClient()
+  const supabase: any = dbClient !== undefined ? dbClient : createAdminClient()
 
   // Duplicate-send guard: skip if a sent confirmation already exists for this session.
   if (type === 'confirmation') {
@@ -129,7 +134,7 @@ export async function sendSessionNotification(
       .eq('type', 'confirmation')
       .eq('status', 'sent')
       .limit(1)
-    if (existing && existing.length > 0) return
+    if (existing && existing.length > 0) return { sent: false, noRecipient: false }
   }
 
   let recipientEmail: string | null = null
@@ -140,16 +145,36 @@ export async function sendSessionNotification(
     const client = await getClientById(practitioner.id, session.client_id)
     clientName = `${client.first_name} ${client.last_name}`
 
-    if (client.self_manager_email) {
-      recipientEmail = client.self_manager_email
-      recipientName = client.self_manager_name ?? clientName
-    } else if (client.email) {
+    // Client email takes priority; fall back to guardian/self-manager email.
+    if (client.email) {
       recipientEmail = client.email
       recipientName = clientName
+    } else if (client.self_manager_email) {
+      recipientEmail = client.self_manager_email
+      recipientName = client.self_manager_name ?? clientName
     }
   } catch (err) {
     console.error('[session-notifications] could not fetch client:', err)
   }
+
+  // Fetch service name for the email body (non-fatal if missing).
+  let serviceName: string | null = null
+  if (session.service_id) {
+    try {
+      const { data: svc } = await supabase
+        .from('services')
+        .select('name')
+        .eq('id', session.service_id)
+        .maybeSingle()
+      serviceName = svc?.name ?? null
+    } catch { /* non-fatal */ }
+  }
+
+  console.log(
+    `[session-notifications] type=${type} session=${session.id} client=${session.client_id}`,
+    `| recipient=${recipientEmail ?? 'NONE'} name="${recipientName}"`,
+    `| service="${serviceName ?? 'none'}"`,
+  )
 
   const { data: notif, error: insertErr } = await supabase
     .from('session_notifications')
@@ -168,21 +193,15 @@ export async function sendSessionNotification(
 
   if (insertErr || !notif) {
     console.error('[session-notifications] could not create record:', insertErr?.message)
-    return
+    return { sent: false, noRecipient: !recipientEmail, error: insertErr?.message }
   }
-
-  console.log(
-    `[session-notifications] type=${type} session=${session.id}`,
-    `| recipient=${recipientEmail ?? 'NONE'} name="${recipientName}"`,
-    `| client_id=${session.client_id}`,
-  )
 
   if (!recipientEmail) {
     await supabase
       .from('session_notifications')
       .update({ status: 'failed', error_message: 'No email address found for client or guardian.' })
       .eq('id', notif.id)
-    return
+    return { sent: false, noRecipient: true }
   }
 
   let orgSettings = null
@@ -201,6 +220,7 @@ export async function sendSessionNotification(
     startTime: session.start_time ? formatHHMM(session.start_time) : 'TBD',
     endTime: deriveEndDisplay(session),
     location: null,
+    serviceName,
   }
 
   const { subject, html } = buildEmail(type, emailData)
@@ -215,10 +235,17 @@ export async function sendSessionNotification(
       subject,
       html,
     })
+    console.log(
+      `[session-notifications] sent | type=${type} session=${session.id}`,
+      `client=${session.client_id} recipient=${recipientEmail}`,
+    )
   } catch (err) {
     status = 'failed'
     errorMessage = err instanceof Error ? err.message : String(err)
-    console.error('[session-notifications] send failed:', err)
+    console.error(
+      `[session-notifications] send failed | type=${type} session=${session.id} recipient=${recipientEmail}:`,
+      errorMessage,
+    )
   }
 
   await supabase
@@ -229,4 +256,8 @@ export async function sendSessionNotification(
       sent_at: status === 'sent' ? new Date().toISOString() : null,
     })
     .eq('id', notif.id)
+
+  return status === 'sent'
+    ? { sent: true, noRecipient: false }
+    : { sent: false, noRecipient: false, error: errorMessage ?? 'Failed to send.' }
 }

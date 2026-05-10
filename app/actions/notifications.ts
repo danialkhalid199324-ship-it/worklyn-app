@@ -33,25 +33,16 @@ export async function sendSessionReminder(
   if (error || !raw) return { error: 'Session not found.' }
   const session = raw as unknown as SessionRow
 
-  try {
-    await sendSessionNotification(session, practitioner, user.email ?? '', 'reminder')
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to send reminder.' }
+  console.log(`[session-notifications] manual reminder requested | session=${sessionId} client=${session.client_id}`)
+
+  const result = await sendSessionNotification(session, practitioner, user.email ?? '', 'reminder')
+
+  if (result.noRecipient) {
+    return { error: 'No email address found for this client or their guardian. Add an email to the client profile before sending reminders.' }
   }
 
-  // sendSessionNotification never throws — it logs failures internally and marks
-  // the DB record as 'failed'. Check the record to surface the real outcome.
-  const { data: notif } = await supabase
-    .from('session_notifications')
-    .select('status, error_message')
-    .eq('session_id', sessionId)
-    .eq('type', 'reminder')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (notif?.status === 'failed') {
-    return { error: notif.error_message ?? 'Failed to send reminder.' }
+  if (!result.sent) {
+    return { error: result.error ?? 'Failed to send reminder.' }
   }
 
   return { success: true }
