@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase-server'
 import TeamClient from './TeamClient'
 import type { ClinicMemberWithProfile } from '@/lib/db'
 
-export const metadata: Metadata = { title: 'Practitioners' }
+export const metadata: Metadata = { title: 'Team & Permissions' }
 
 export default async function TeamPage() {
   const user = await requireAuth()

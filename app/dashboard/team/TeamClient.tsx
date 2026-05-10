@@ -16,6 +16,10 @@ const ROLE_LABELS: Record<ClinicRole, string> = {
   finance:      'Finance',
 }
 
+const ROLE_DESCRIPTION: Partial<Record<ClinicRole, string>> = {
+  admin: 'Admin can manage day-to-day operations.',
+}
+
 const ROLE_BADGE: Record<ClinicRole, string> = {
   admin:        'bg-rose-50 text-rose-700 ring-rose-200/60',
   practitioner: 'bg-brand-50 text-brand-700 ring-brand-200/60',
@@ -183,6 +187,9 @@ function PractitionerCard({
                 {ROLE_LABELS[m.role]}
               </span>
             )}
+            {ROLE_DESCRIPTION[m.role] && (
+              <p className="mt-1.5 text-xs text-gray-400">{ROLE_DESCRIPTION[m.role]}</p>
+            )}
           </div>
         </div>
       </div>
@@ -285,11 +292,9 @@ export default function TeamClient({ currentPractitioner, members, isAdmin, owne
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Clinic</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900">Practitioners</h1>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900">Team &amp; Permissions</h1>
           <p className="mt-1 text-sm text-gray-500">
-            {isAdmin
-              ? 'Manage your workforce and service delivery team.'
-              : 'Your clinic practitioners.'}
+            Manage who can access your practice and what they can do.
           </p>
         </div>
         {isAdmin && (
@@ -300,7 +305,7 @@ export default function TeamClient({ currentPractitioner, members, isAdmin, owne
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
             </svg>
-            Invite Practitioner
+            Invite Team Member
           </button>
         )}
       </div>
@@ -326,6 +331,7 @@ export default function TeamClient({ currentPractitioner, members, isAdmin, owne
               {currentPractitioner.provider_number && (
                 <p className="mt-0.5 text-xs text-gray-400">Provider #{currentPractitioner.provider_number}</p>
               )}
+              <p className="mt-1.5 text-xs text-gray-400">Owner has full access.</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-3">
@@ -395,22 +401,22 @@ export default function TeamClient({ currentPractitioner, members, isAdmin, owne
                 d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </div>
-          <p className="mt-4 text-base font-semibold text-gray-800">No practitioners added yet.</p>
+          <p className="mt-4 text-base font-semibold text-gray-800">No team members added yet.</p>
           <p className="mt-1.5 max-w-sm text-sm text-gray-400">
-            Build your workforce and manage service delivery from one place.
+            Invite your team and control what each person can access.
           </p>
           {isAdmin && (
             <button
               onClick={() => setShowModal(true)}
               className="mt-6 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition-colors"
             >
-              Invite Practitioner
+              Invite Team Member
             </button>
           )}
         </div>
       ) : filteredMembers.length === 0 ? (
         <div className="flex items-center justify-center rounded-2xl border border-gray-100 bg-white py-12 px-6">
-          <p className="text-sm text-gray-400">No practitioners match your search.</p>
+          <p className="text-sm text-gray-400">No team members match your search.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
