@@ -359,6 +359,8 @@ export async function getInvoiceById(practitionerId: string, invoiceId: string):
 export type SessionWithClient = SessionRow & {
   clients: { first_name: string; last_name: string } | null
   invoices: { invoice_number: string } | null
+  services: { name: string } | null
+  practitioners: { first_name: string; last_name: string } | null
 }
 
 export async function getSessions(
@@ -369,7 +371,7 @@ export async function getSessions(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q: any = supabase
     .from('sessions')
-    .select('*, clients(first_name, last_name), invoices(invoice_number)')
+    .select('*, clients(first_name, last_name), invoices(invoice_number), services(name), practitioners(first_name, last_name)')
     .eq('practitioner_id', practitionerId)
     .order('service_date', { ascending: false })
     .order('created_at', { ascending: false })
@@ -384,7 +386,7 @@ export async function getUnbilledSessions(practitionerId: string, clientId?: str
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let query: any = supabase
     .from('sessions')
-    .select('*, clients(first_name, last_name), invoices(invoice_number)')
+    .select('*, clients(first_name, last_name), invoices(invoice_number), services(name), practitioners(first_name, last_name)')
     .eq('practitioner_id', practitionerId)
     .eq('status', 'completed')
     .is('invoice_id', null)

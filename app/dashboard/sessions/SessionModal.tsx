@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Button from '@/components/ui/Button'
 import { createSession, updateSession, deleteSession } from '@/app/actions/sessions'
 import { fetchSessionNotifications, sendSessionReminder } from '@/app/actions/notifications'
-import type { ClientRow, ServiceRow, NdisPriceGuideRow, SessionNotificationRow, SessionStatus } from '@/types/database'
+import type { ClientRow, ServiceRow, NdisPriceGuideRow, SessionNotificationRow, SessionStatus, PractitionerRow } from '@/types/database'
 import type { SessionWithClient } from '@/lib/db'
 import TherapyNotesFields, {
   type TherapyNotes,
@@ -21,6 +21,8 @@ interface Props {
   clients: ClientRow[]
   services?: ServiceRow[]
   priceGuide?: NdisPriceGuideRow[]
+  practitioners?: PractitionerRow[]
+  defaultPractitionerId?: string
   session: SessionWithClient | null
   onClose: () => void
   defaultDate?: string       // YYYY-MM-DD, used when opening a new session from calendar
@@ -69,7 +71,7 @@ function ndisToTherapyNotes(ndis: NDISNotes): TherapyNotes {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function SessionModal({ clients, services = [], priceGuide = [], session, onClose, defaultDate, defaultStartTime }: Props) {
+export default function SessionModal({ clients, services = [], priceGuide = [], practitioners = [], defaultPractitionerId = '', session, onClose, defaultDate, defaultStartTime }: Props) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [deletePending, startDeleteTransition] = useTransition()
@@ -110,6 +112,11 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
 
   // Controlled status — needed to intercept transition to 'completed'
   const [selectedStatus, setSelectedStatus] = useState<SessionStatus>(session?.status ?? 'scheduled')
+
+  // Practitioner selection — only relevant when creating a new session
+  const [selectedPractitionerId, setSelectedPractitionerId] = useState(
+    session?.practitioner_id ?? defaultPractitionerId,
+  )
 
   // Notes completion modal state
   const [showNotesStep, setShowNotesStep] = useState(false)
@@ -268,6 +275,7 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
           duration_minutes: parseInt(fd.get('duration_minutes') as string) || 60,
           ndis_line_item: (fd.get('ndis_line_item') as string)?.trim() || null,
           rate: parseFloat(fd.get('rate') as string) || 0,
+          selected_practitioner_id: selectedPractitionerId || undefined,
         })
       }
       setShowNotesStep(true)
@@ -391,6 +399,26 @@ export default function SessionModal({ clients, services = [], priceGuide = [], 
                   {services.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}{s.ndis_line_item ? ` — ${s.ndis_line_item}` : ''}{s.default_rate ? ` ($${s.default_rate}/hr)` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Practitioner — only shown when multiple practitioners exist */}
+            {practitioners.length > 1 && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Practitioner</label>
+                <select
+                  name="selected_practitioner_id"
+                  disabled={!!session}
+                  value={selectedPractitionerId}
+                  onChange={(e) => setSelectedPractitionerId(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-500"
+                >
+                  {practitioners.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.first_name} {p.last_name}
                     </option>
                   ))}
                 </select>

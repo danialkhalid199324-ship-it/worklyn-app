@@ -239,6 +239,10 @@ export interface InvoiceRow {
   issued_at: string | null
   due_at: string | null
   paid_at: string | null
+  invoice_sent_at: string | null
+  payment_reference: string | null
+  payment_notes: string | null
+  remittance_received_at: string | null
   recipient_type: InvoiceRecipientType | null
   recipient_name: string | null
   recipient_email: string | null

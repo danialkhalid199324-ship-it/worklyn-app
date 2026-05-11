@@ -99,8 +99,17 @@ export async function updateInvoiceStatus(
   const practitioner = await getPractitionerByUserId(user.id)
   const supabase = await createServerSupabaseClient()
 
+  const { data: existing } = await supabase
+    .from('invoices')
+    .select('status')
+    .eq('id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+    .single()
+
+  const now = new Date().toISOString()
   const update: Record<string, unknown> = { status }
-  if (status === 'paid') update.paid_at = new Date().toISOString()
+  if (status === 'paid') update.paid_at = now
+  if (status === 'sent') update.invoice_sent_at = now
 
   const { error } = await supabase
     .from('invoices')
@@ -110,7 +119,17 @@ export async function updateInvoiceStatus(
 
   if (error) return { error: error.message }
 
+  await supabase.from('invoice_audit_log').insert({
+    invoice_id: invoiceId,
+    practitioner_id: practitioner.id,
+    edited_by: user.id,
+    previous_values: { status: existing?.status ?? 'unknown' },
+    updated_values: update,
+    reason: `Status changed to ${status}`,
+  })
+
   revalidatePath('/dashboard/invoices')
+  revalidatePath(`/dashboard/invoices/${invoiceId}`)
   return { success: true }
 }
 
@@ -226,13 +245,23 @@ export async function sendInvoice(invoiceId: string) {
     return { error: `Failed to send email: ${err instanceof Error ? err.message : 'Unknown error'}` }
   }
 
+  const now = new Date().toISOString()
   const { error } = await supabase
     .from('invoices')
-    .update({ status: 'sent' })
+    .update({ status: 'sent', invoice_sent_at: now })
     .eq('id', invoiceId)
     .eq('practitioner_id', practitioner.id)
 
   if (error) return { error: error.message }
+
+  await supabase.from('invoice_audit_log').insert({
+    invoice_id: invoiceId,
+    practitioner_id: practitioner.id,
+    edited_by: user.id,
+    previous_values: { status: invoice.status },
+    updated_values: { status: 'sent', invoice_sent_at: now },
+    reason: 'Invoice sent via email',
+  })
 
   revalidatePath('/dashboard/invoices')
   revalidatePath(`/dashboard/invoices/${invoiceId}`)
@@ -392,6 +421,117 @@ export async function updateInvoice(
   revalidatePath('/dashboard/invoices')
   revalidatePath(`/dashboard/invoices/${invoiceId}`)
   if (clientId) revalidatePath(`/dashboard/clients/${clientId}`)
+  return { success: true }
+}
+
+export async function markInvoicePaid(
+  invoiceId: string,
+  paymentReference: string,
+  paymentNotes: string,
+) {
+  const user = await requireAuth()
+  const practitioner = await getPractitionerByUserId(user.id)
+  const supabase = await createServerSupabaseClient()
+
+  const { data: existing } = await supabase
+    .from('invoices')
+    .select('status')
+    .eq('id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+    .single()
+  if (!existing) return { error: 'Invoice not found.' }
+
+  const now = new Date().toISOString()
+  const update: Record<string, unknown> = {
+    status: 'paid',
+    paid_at: now,
+    payment_reference: paymentReference.trim() || null,
+    payment_notes: paymentNotes.trim() || null,
+  }
+
+  const { error } = await supabase
+    .from('invoices')
+    .update(update)
+    .eq('id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+
+  if (error) return { error: error.message }
+
+  await supabase.from('invoice_audit_log').insert({
+    invoice_id: invoiceId,
+    practitioner_id: practitioner.id,
+    edited_by: user.id,
+    previous_values: { status: existing.status },
+    updated_values: update,
+    reason: 'Marked as paid',
+  })
+
+  revalidatePath('/dashboard/invoices')
+  revalidatePath(`/dashboard/invoices/${invoiceId}`)
+  return { success: true }
+}
+
+export async function markRemittanceReceived(invoiceId: string) {
+  const user = await requireAuth()
+  const practitioner = await getPractitionerByUserId(user.id)
+  const supabase = await createServerSupabaseClient()
+
+  const now = new Date().toISOString()
+  const { error } = await supabase
+    .from('invoices')
+    .update({ remittance_received_at: now })
+    .eq('id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+
+  if (error) return { error: error.message }
+
+  await supabase.from('invoice_audit_log').insert({
+    invoice_id: invoiceId,
+    practitioner_id: practitioner.id,
+    edited_by: user.id,
+    previous_values: { remittance_received_at: null },
+    updated_values: { remittance_received_at: now },
+    reason: 'Remittance advice received',
+  })
+
+  revalidatePath('/dashboard/invoices')
+  revalidatePath(`/dashboard/invoices/${invoiceId}`)
+  return { success: true }
+}
+
+export async function updatePaymentDetails(
+  invoiceId: string,
+  paymentReference: string,
+  paymentNotes: string,
+) {
+  const user = await requireAuth()
+  const practitioner = await getPractitionerByUserId(user.id)
+  const supabase = await createServerSupabaseClient()
+
+  const update = {
+    payment_reference: paymentReference.trim() || null,
+    payment_notes: paymentNotes.trim() || null,
+  }
+
+  const { error } = await supabase
+    .from('invoices')
+    .update(update)
+    .eq('id', invoiceId)
+    .eq('practitioner_id', practitioner.id)
+
+  if (error) return { error: error.message }
+
+  await supabase.from('invoice_audit_log').insert({
+    invoice_id: invoiceId,
+    practitioner_id: practitioner.id,
+    edited_by: user.id,
+    previous_values: {},
+    updated_values: update,
+    reason: 'Payment details updated',
+  })
+
+  revalidatePath('/dashboard/invoices')
+  revalidatePath(`/dashboard/invoices/${invoiceId}`)
   return { success: true }
 }
 

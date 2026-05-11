@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { requireAuth } from '@/lib/auth'
 import { getPractitionerByUserId, getInvoices, getClients, getOrgSettings } from '@/lib/db'
 import { getNextInvoiceNumber } from '@/app/actions/invoices'
+import { createServerSupabaseClient } from '@/lib/supabase-server'
 import InvoicesClient from './InvoicesClient'
 
 export const metadata: Metadata = { title: 'Invoices' }
@@ -9,6 +10,19 @@ export const metadata: Metadata = { title: 'Invoices' }
 export default async function InvoicesPage() {
   const user = await requireAuth()
   const practitioner = await getPractitionerByUserId(user.id)
+
+  // Auto-mark overdue: flip sent invoices whose due_at has passed.
+  // Runs on every page load — safe, targeted, no side-effects on other fields.
+  try {
+    const supabase = await createServerSupabaseClient()
+    const todayIso = new Date().toISOString()
+    await supabase
+      .from('invoices')
+      .update({ status: 'overdue' })
+      .eq('practitioner_id', practitioner.id)
+      .eq('status', 'sent')
+      .lt('due_at', todayIso)
+  } catch { /* non-fatal — page still renders with stale status */ }
 
   const [invoices, clients, nextInvoiceNumber, orgSettings] = await Promise.all([
     getInvoices(practitioner.id),
@@ -28,6 +42,8 @@ export default async function InvoicesPage() {
   let overdueCents = 0
   let overdueCount = 0
   let draftCount = 0
+  let awaitingRemittanceCents = 0
+  let awaitingRemittanceCount = 0
 
   for (const inv of invoices) {
     if (inv.status === 'draft') {
@@ -38,9 +54,16 @@ export default async function InvoicesPage() {
     } else if (inv.status === 'overdue') {
       overdueCents += inv.total_cents
       overdueCount++
-    } else if (inv.status === 'paid' && inv.paid_at && inv.paid_at >= monthStart) {
-      paidThisMonthCents += inv.total_cents
-      paidThisMonthCount++
+    } else if (inv.status === 'paid') {
+      if (inv.paid_at && inv.paid_at >= monthStart) {
+        paidThisMonthCents += inv.total_cents
+        paidThisMonthCount++
+      }
+      // Paid but remittance not yet received
+      if (!inv.remittance_received_at) {
+        awaitingRemittanceCents += inv.total_cents
+        awaitingRemittanceCount++
+      }
     }
   }
 
@@ -58,6 +81,8 @@ export default async function InvoicesPage() {
         overdueCents,
         overdueCount,
         draftCount,
+        awaitingRemittanceCents,
+        awaitingRemittanceCount,
       }}
     />
   )

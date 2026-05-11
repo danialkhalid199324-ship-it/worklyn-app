@@ -117,6 +117,10 @@ export async function sendSessionNotification(
   // Falls back to the cookie-based server client in normal server action calls.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   dbClient?: any,
+  // When an admin creates a session for a team member, the client is owned by
+  // the admin's practitioner_id, not the member's. Pass the admin's id here so
+  // getClientById can find the client record.
+  clientOwnerId?: string,
 ): Promise<{ sent: boolean; noRecipient: boolean; error?: string }> {
   // Use admin client by default: the cookie-based server client cannot reliably
   // propagate the JWT through nested async calls, causing RLS to block the
@@ -142,7 +146,7 @@ export async function sendSessionNotification(
   let clientName = 'Client'
 
   try {
-    const client = await getClientById(practitioner.id, session.client_id)
+    const client = await getClientById(clientOwnerId ?? practitioner.id, session.client_id)
     clientName = `${client.first_name} ${client.last_name}`
 
     // Client email takes priority; fall back to guardian/self-manager email.

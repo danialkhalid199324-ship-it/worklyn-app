@@ -2,8 +2,9 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { requireAuth } from '@/lib/auth'
 import { getPractitionerByUserId, getInvoiceById, getOrgSettings, getSessionsByInvoice, getClients } from '@/lib/db'
+import { createServerSupabaseClient } from '@/lib/supabase-server'
 import InvoiceDetailClient from './InvoiceDetailClient'
-import type { ClientRow, InvoiceItemRow } from '@/types/database'
+import type { ClientRow, InvoiceAuditLogRow, InvoiceItemRow } from '@/types/database'
 
 export const metadata: Metadata = { title: 'Invoice' }
 
@@ -24,11 +25,21 @@ export default async function InvoiceDetailPage({
     notFound()
   }
 
-  const [orgSettings, sessions, clients] = await Promise.all([
+  const supabase = await createServerSupabaseClient()
+  const [orgSettings, sessions, clients, auditLogResult] = await Promise.all([
     getOrgSettings(practitioner.id),
     getSessionsByInvoice(practitioner.id, id).catch(() => []),
     getClients(practitioner.id),
+    supabase
+      .from('invoice_audit_log')
+      .select('*')
+      .eq('invoice_id', id)
+      .eq('practitioner_id', practitioner.id)
+      .order('edited_at', { ascending: false })
+      .limit(20),
   ])
+
+  const auditLog = (auditLogResult.data ?? []) as unknown as InvoiceAuditLogRow[]
 
   return (
     <InvoiceDetailClient
@@ -37,6 +48,7 @@ export default async function InvoiceDetailPage({
       practitioner={practitioner}
       sessions={sessions}
       clients={clients}
+      auditLog={auditLog}
     />
   )
 }

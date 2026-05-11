@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getClientById } from '@/lib/db'
+import { getPractitionerByUserId, getPractitionerById, getClientById } from '@/lib/db'
 import { resolveInvoiceRecipient } from '@/lib/invoice-routing'
 import { sendSessionNotification } from '@/lib/session-notifications'
 import { recalculateAllocationForClient } from '@/app/actions/funding'
@@ -309,6 +309,15 @@ export async function createSession(formData: FormData) {
   const practitioner = await getPractitionerByUserId(user.id)
   const supabase = await createServerSupabaseClient()
 
+  // Allow admin to assign session to a different practitioner in the same clinic.
+  // Falls back to the logged-in practitioner if not provided or not found.
+  const rawSelectedId = (formData.get('selected_practitioner_id') as string)?.trim() || ''
+  let sessionPractitioner = practitioner
+  if (rawSelectedId && rawSelectedId !== practitioner.id) {
+    const found = await getPractitionerById(rawSelectedId)
+    if (found) sessionPractitioner = found
+  }
+
   const clientId = formData.get('client_id') as string
   const serviceDate = formData.get('service_date') as string
   const durationMinutes = parseInt(formData.get('duration_minutes') as string)
@@ -324,10 +333,10 @@ export async function createSession(formData: FormData) {
   const startTime = rawStart || null
   const endTime = deriveEndTime(rawStart, rawEnd, durationMinutes)
 
-  // Conflict check — only when a time range is known
+  // Conflict check against the session practitioner's calendar
   if (startTime && endTime) {
     const conflict = await checkConflict(
-      supabase, practitioner.id, serviceDate, startTime, endTime,
+      supabase, sessionPractitioner.id, serviceDate, startTime, endTime,
     )
     if (conflict) return { error: conflict }
   }
@@ -343,7 +352,7 @@ export async function createSession(formData: FormData) {
   const { data: newSession, error } = await supabase
     .from('sessions')
     .insert({
-      practitioner_id: practitioner.id,
+      practitioner_id: sessionPractitioner.id,
       client_id: clientId,
       appointment_id: (formData.get('appointment_id') as string) || null,
       service_id: (formData.get('service_id') as string) || null,
@@ -366,7 +375,7 @@ export async function createSession(formData: FormData) {
   if (sessionStatus === 'completed' && newSession) {
     let autoInvoiceErr: string | null = null
     try {
-      autoInvoiceErr = await autoCreateDraftInvoice(supabase, practitioner, newSession.id)
+      autoInvoiceErr = await autoCreateDraftInvoice(supabase, sessionPractitioner, newSession.id)
     } catch (err) {
       autoInvoiceErr = err instanceof Error ? err.message : String(err)
       console.error('[createSession] auto-invoice threw:', autoInvoiceErr)
@@ -382,7 +391,7 @@ export async function createSession(formData: FormData) {
     }
     // Recalculate funding allocation usage — non-blocking
     try {
-      await recalculateAllocationForClient(practitioner.id, clientId)
+      await recalculateAllocationForClient(sessionPractitioner.id, clientId)
     } catch (err) {
       console.warn('[createSession] allocation recalculation failed (non-critical):', String(err))
     }
@@ -393,9 +402,11 @@ export async function createSession(formData: FormData) {
     try {
       const notifResult = await sendSessionNotification(
         newSession as unknown as import('@/types/database').SessionRow,
-        practitioner,
+        sessionPractitioner,
         user.email ?? '',
         'confirmation',
+        undefined,
+        practitioner.id,
       )
       if (notifResult.noRecipient) {
         revalidatePath('/dashboard/sessions')

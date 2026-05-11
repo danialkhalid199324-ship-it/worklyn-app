@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
 import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getClients, getSessions, getServices, getNdisPriceGuide } from '@/lib/db'
+import { getPractitionerByUserId, getClients, getSessions, getServices, getNdisPriceGuide, getClinicMembers } from '@/lib/db'
 import SessionsClient from './SessionsClient'
+import type { PractitionerRow } from '@/types/database'
 
 export const metadata: Metadata = { title: 'Sessions' }
 
@@ -9,10 +10,12 @@ export default async function SessionsPage() {
   const user = await requireAuth()
   const practitioner = await getPractitionerByUserId(user.id)
 
-  const [sessions, clients, services] = await Promise.all([
+  const [sessions, clients, services, clinicMembers] = await Promise.all([
     getSessions(practitioner.id, 200),
     getClients(practitioner.id),
     getServices(practitioner.id),
+    // clinic_id in clinic_memberships is the admin/owner's practitioner.id
+    getClinicMembers(practitioner.id).catch(() => []),
   ])
 
   const supportNums = Array.from(new Set(
@@ -20,5 +23,27 @@ export default async function SessionsPage() {
   ))
   const priceGuide = await getNdisPriceGuide(supportNums)
 
-  return <SessionsClient sessions={sessions} clients={clients} services={services} priceGuide={priceGuide} />
+  // Extract practitioner rows from clinic members (skip pending invites with no practitioner row)
+  const practitioners: PractitionerRow[] = clinicMembers
+    .map((m) => m.member)
+    .filter((m): m is PractitionerRow => m !== null)
+
+  // Ensure the logged-in practitioner is always in the list (even if not in clinic_memberships)
+  if (!practitioners.find((p) => p.id === practitioner.id)) {
+    practitioners.unshift(practitioner)
+  }
+
+  const practitionerName = `${practitioner.first_name} ${practitioner.last_name}`
+
+  return (
+    <SessionsClient
+      sessions={sessions}
+      clients={clients}
+      services={services}
+      priceGuide={priceGuide}
+      practitioners={practitioners}
+      defaultPractitionerId={practitioner.id}
+      practitionerName={practitionerName}
+    />
+  )
 }

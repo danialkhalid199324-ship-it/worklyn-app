@@ -21,6 +21,7 @@ export interface NewSessionData {
   duration_minutes: number
   ndis_line_item: string | null
   rate: number
+  selected_practitioner_id?: string
 }
 
 interface Props {
@@ -86,6 +87,7 @@ export default function CompleteSessionNotesModal({
         fd.set('duration_minutes', String(newSessionData.duration_minutes))
         if (newSessionData.ndis_line_item) fd.set('ndis_line_item', newSessionData.ndis_line_item)
         fd.set('rate', String(newSessionData.rate))
+        if (newSessionData.selected_practitioner_id) fd.set('selected_practitioner_id', newSessionData.selected_practitioner_id)
         fd.set('status', 'completed')
         fd.set('notes', notesJson)
         result = await createSession(fd)

@@ -6,7 +6,7 @@ import Button from '@/components/ui/Button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { deleteSession, cancelSession } from '@/app/actions/sessions'
-import type { ClientRow, ServiceRow, NdisPriceGuideRow } from '@/types/database'
+import type { ClientRow, ServiceRow, NdisPriceGuideRow, PractitionerRow } from '@/types/database'
 import type { SessionWithClient } from '@/lib/db'
 import SessionModal from './SessionModal'
 import GenerateInvoiceModal from './GenerateInvoiceModal'
@@ -17,6 +17,9 @@ interface Props {
   clients: ClientRow[]
   services: ServiceRow[]
   priceGuide: NdisPriceGuideRow[]
+  practitioners: PractitionerRow[]
+  defaultPractitionerId: string
+  practitionerName: string
 }
 
 const STATUS_COLOR = {
@@ -31,7 +34,7 @@ function sessionAmount(s: SessionWithClient) {
   return Math.round((s.duration_minutes / 60) * s.rate * 100)
 }
 
-export default function SessionsClient({ sessions, clients, services, priceGuide }: Props) {
+export default function SessionsClient({ sessions, clients, services, priceGuide, practitioners, defaultPractitionerId, practitionerName }: Props) {
   const router = useRouter()
   const [filter, setFilter] = useState<Filter>('all')
   const [showNew, setShowNew] = useState(false)
@@ -130,7 +133,8 @@ export default function SessionsClient({ sessions, clients, services, priceGuide
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Date</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Client</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">NDIS code</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Service</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Practitioner</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-400">Duration</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-400">Amount</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-gray-400">Status</th>
@@ -154,7 +158,12 @@ export default function SessionsClient({ sessions, clients, services, priceGuide
                       : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-500">
-                    {s.ndis_line_item ?? '—'}
+                    {s.services?.name ?? s.ndis_line_item ?? '—'}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">
+                    {s.practitioners
+                      ? `${s.practitioners.first_name} ${s.practitioners.last_name}`
+                      : practitionerName}
                   </td>
                   <td className="px-4 py-3 text-right text-gray-600">
                     {s.duration_minutes}min
@@ -227,6 +236,8 @@ export default function SessionsClient({ sessions, clients, services, priceGuide
           clients={clients}
           services={services}
           priceGuide={priceGuide}
+          practitioners={practitioners}
+          defaultPractitionerId={defaultPractitionerId}
           session={editSession}
           onClose={() => { setShowNew(false); setEditSession(null) }}
         />
