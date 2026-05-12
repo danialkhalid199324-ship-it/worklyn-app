@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { getPeriodDates, type Period } from '@/lib/reports'
 import ReportsDashboard from './ReportsDashboard'
@@ -14,8 +13,7 @@ export default async function ReportsPage({
 }: {
   searchParams: { period?: string }
 }) {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
   const supabase = await createServerSupabaseClient()
   const pid = practitioner.id
 

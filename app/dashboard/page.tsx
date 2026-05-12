@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
 import Card from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getClients, getServices, getNdisPriceGuide, getOrgSettings } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getClients, getServices, getNdisPriceGuide, getOrgSettings } from '@/lib/db'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { getNextInvoiceNumber } from '@/app/actions/invoices'
 import DashboardQuickActions from './DashboardQuickActions'
@@ -41,8 +41,7 @@ function daysUntil(dateStr: string): number {
 }
 
 export default async function DashboardPage() {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
   const supabase = await createServerSupabaseClient()
   const pid = practitioner.id
 

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getClients, getServices, getSessionsForDateRange, getNdisPriceGuide } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getClients, getServices, getSessionsForDateRange, getNdisPriceGuide } from '@/lib/db'
 import CalendarClient from './CalendarClient'
 
 export const metadata: Metadata = { title: 'Calendar' }
@@ -27,8 +27,7 @@ export default async function CalendarPage({
 }: {
   searchParams: { week?: string }
 }) {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
 
   // If the client passed ?week=YYYY-MM-DD we trust it (already a Monday).
   // Otherwise derive Monday from the current UTC date.

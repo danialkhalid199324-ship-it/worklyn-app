@@ -1,13 +1,12 @@
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getAllServices } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getAllServices } from '@/lib/db'
 import ServicesClient from './ServicesClient'
 
 export const metadata: Metadata = { title: 'Service Catalogue' }
 
 export default async function ServicesPage() {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
   const services = await getAllServices(practitioner.id)
 
   return (

@@ -1,13 +1,12 @@
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getOrgSettings } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getOrgSettings } from '@/lib/db'
 import SettingsClient from './SettingsClient'
 
 export const metadata: Metadata = { title: 'Settings' }
 
 export default async function SettingsPage() {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { user, practitioner } = await requireAuthWithPractitioner()
   const orgSettings = await getOrgSettings(practitioner.id)
 
   // Derive initial MFA state from the user object returned by Supabase —

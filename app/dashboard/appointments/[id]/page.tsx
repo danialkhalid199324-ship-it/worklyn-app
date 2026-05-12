@@ -1,9 +1,8 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { requireAuth } from '@/lib/auth'
+import { requireAuthWithPractitioner } from '@/lib/auth'
 import {
-  getPractitionerByUserId,
   getAppointmentById,
   getSessionNoteByAppointmentId,
 } from '@/lib/db'
@@ -26,8 +25,7 @@ const STATUS_COLORS: Record<string, 'gray' | 'green' | 'amber' | 'red' | 'blue' 
 }
 
 export default async function AppointmentDetailPage({ params }: Props) {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
 
   let appointment
   try {

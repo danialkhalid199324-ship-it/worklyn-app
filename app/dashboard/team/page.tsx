@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getClinicMembers } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getClinicMembers } from '@/lib/db'
 import { createAdminClient } from '@/lib/supabase-server'
 import TeamClient from './TeamClient'
 import type { ClinicMemberWithProfile } from '@/lib/db'
@@ -8,8 +8,7 @@ import type { ClinicMemberWithProfile } from '@/lib/db'
 export const metadata: Metadata = { title: 'Team & Permissions' }
 
 export default async function TeamPage() {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { user, practitioner } = await requireAuthWithPractitioner()
   // role='admin' after migration 015; null/undefined before migration = solo owner
   const practitionerRole = practitioner.role as string | undefined
   const isAdmin = !practitionerRole || practitionerRole === 'admin'

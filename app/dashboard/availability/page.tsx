@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import AvailabilityForm from './AvailabilityForm'
 import BlockedTimesSection from './BlockedTimesSection'
@@ -8,8 +7,7 @@ import BlockedTimesSection from './BlockedTimesSection'
 export const metadata: Metadata = { title: 'Availability' }
 
 export default async function AvailabilityPage() {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
   const supabase = await createServerSupabaseClient()
 
   const [rulesRes, blockedRes] = await Promise.all([

@@ -1,14 +1,13 @@
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getClients, getSessions, getServices, getNdisPriceGuide, getClinicMembers } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getClients, getSessions, getServices, getNdisPriceGuide, getClinicMembers } from '@/lib/db'
 import SessionsClient from './SessionsClient'
 import type { PractitionerRow } from '@/types/database'
 
 export const metadata: Metadata = { title: 'Sessions' }
 
 export default async function SessionsPage() {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
 
   const [sessions, clients, services, clinicMembers] = await Promise.all([
     getSessions(practitioner.id, 200),

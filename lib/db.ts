@@ -1,3 +1,4 @@
+import { cache } from 'react'
 import { createServerSupabaseClient } from './supabase-server'
 import type {
   PractitionerRow,
@@ -27,7 +28,7 @@ export type ClinicMemberWithProfile = ClinicMembershipRow & {
 // the version mismatch between @supabase/ssr 0.5.x and @supabase/supabase-js 2.103.x.
 // ---------------------------------------------------------------------------
 
-export async function getPractitionerByUserId(userId: string): Promise<PractitionerRow> {
+export const getPractitionerByUserId = cache(async (userId: string): Promise<PractitionerRow> => {
   const supabase = await createServerSupabaseClient()
   const { data, error } = await supabase
     .from('practitioners')
@@ -36,7 +37,7 @@ export async function getPractitionerByUserId(userId: string): Promise<Practitio
     .single()
   if (error) throw error
   return data as unknown as PractitionerRow
-}
+})
 
 export async function getClients(practitionerId: string): Promise<ClientRow[]> {
   const supabase = await createServerSupabaseClient()

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Card from '@/components/ui/Card'
@@ -8,6 +8,7 @@ import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import ClientModal from '../ClientModal'
 import { updateClient, toggleClientStatus } from '@/app/actions/clients'
+import { fetchClientTabData } from '@/app/actions/client-tabs'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import { resolveInvoiceRecipient, recipientLabel } from '@/lib/invoice-routing'
 import type { ClientRow, InvoiceRow, FundingAllocationRow, ClinicRole } from '@/types/database'
@@ -23,23 +24,26 @@ type DlRow = { label: string; value: string | null | undefined }
 
 interface Props {
   client: ClientRow
-  events: ClientEventRow[]
-  invoices: InvoiceRow[]
-  sessionNotes: ClientSessionNote[]
-  allocations: FundingAllocationRow[]
-  documents: ClientDocumentWithUploader[]
   practitionerRole: ClinicRole
 }
 
 type Tab = 'profile' | 'funding' | 'appointments' | 'reports' | 'invoices' | 'documents'
 
+type TabData = {
+  events?: ClientEventRow[]
+  invoices?: InvoiceRow[]
+  sessionNotes?: ClientSessionNote[]
+  allocations?: FundingAllocationRow[]
+  documents?: ClientDocumentWithUploader[]
+}
+
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'profile', label: 'Profile' },
-  { id: 'funding', label: 'Funding' },
+  { id: 'profile',      label: 'Profile' },
+  { id: 'funding',      label: 'Funding' },
   { id: 'appointments', label: 'Appointments' },
-  { id: 'reports', label: 'Session Notes' },
-  { id: 'invoices', label: 'Invoices' },
-  { id: 'documents', label: 'Documents' },
+  { id: 'reports',      label: 'Session Notes' },
+  { id: 'invoices',     label: 'Invoices' },
+  { id: 'documents',    label: 'Documents' },
 ]
 
 const STATUS_COLORS: Record<string, 'gray' | 'green' | 'amber' | 'red' | 'blue' | 'purple'> = {
@@ -47,27 +51,25 @@ const STATUS_COLORS: Record<string, 'gray' | 'green' | 'amber' | 'red' | 'blue' 
   confirmed: 'green',
   completed: 'gray',
   cancelled: 'red',
-  no_show: 'amber',
+  no_show:   'amber',
 }
 
 const INVOICE_COLORS: Record<string, 'gray' | 'green' | 'amber' | 'red' | 'blue' | 'purple'> = {
-  draft: 'gray',
-  sent: 'blue',
-  paid: 'green',
-  overdue: 'red',
+  draft:     'gray',
+  sent:      'blue',
+  paid:      'green',
+  overdue:   'red',
   cancelled: 'gray',
 }
 
-export default function ClientDetailTabs({
-  client,
-  events,
-  invoices,
-  sessionNotes,
-  allocations,
-  documents,
-  practitionerRole,
-}: Props) {
+export default function ClientDetailTabs({ client, practitionerRole }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('profile')
+  const [tabData, setTabData] = useState<TabData>({})
+  const [loadingTab, setLoadingTab] = useState<Tab | null>(null)
+  const [tabError, setTabError] = useState<Tab | null>(null)
+  // Track which tabs have been loaded so we don't re-fetch on re-visit
+  const loadedTabs = useRef<Set<Tab>>(new Set<Tab>(['profile']))
+
   const [showEditModal, setShowEditModal] = useState(false)
   const [isPending, startTransition] = useTransition()
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -79,6 +81,26 @@ export default function ClientDetailTabs({
       const result = await toggleClientStatus(client.id, !client.is_active)
       if (result?.error) setStatusError(result.error)
       else router.refresh()
+    })
+  }
+
+  function handleTabClick(tab: Tab) {
+    setActiveTab(tab)
+    setTabError(null)
+    if (tab === 'profile' || loadedTabs.current.has(tab)) return
+
+    // Mark as loaded immediately to prevent duplicate fetches
+    loadedTabs.current.add(tab)
+    setLoadingTab(tab)
+
+    fetchClientTabData(client.id, tab).then((result) => {
+      if (result.error) {
+        loadedTabs.current.delete(tab) // allow retry on next click
+        setTabError(tab)
+      } else {
+        setTabData(prev => ({ ...prev, ...result }))
+      }
+      setLoadingTab(null)
     })
   }
 
@@ -134,7 +156,7 @@ export default function ClientDetailTabs({
           {TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabClick(tab.id)}
               className={[
                 'pb-3 text-sm font-medium transition-colors',
                 activeTab === tab.id
@@ -143,29 +165,29 @@ export default function ClientDetailTabs({
               ].join(' ')}
             >
               {tab.label}
-              {tab.id === 'funding' && allocations.some(a => a.is_active) && (
+              {tab.id === 'funding' && tabData.allocations?.some(a => a.is_active) && (
                 <span className="ml-1.5 rounded-full bg-green-100 px-1.5 py-0.5 text-xs text-green-700">
                   active
                 </span>
               )}
-              {tab.id === 'appointments' && events.length > 0 && (
+              {tab.id === 'appointments' && tabData.events && tabData.events.length > 0 && (
                 <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
-                  {events.length}
+                  {tabData.events.length}
                 </span>
               )}
-              {tab.id === 'invoices' && invoices.length > 0 && (
+              {tab.id === 'invoices' && tabData.invoices && tabData.invoices.length > 0 && (
                 <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
-                  {invoices.length}
+                  {tabData.invoices.length}
                 </span>
               )}
-              {tab.id === 'reports' && sessionNotes.length > 0 && (
+              {tab.id === 'reports' && tabData.sessionNotes && tabData.sessionNotes.length > 0 && (
                 <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
-                  {sessionNotes.length}
+                  {tabData.sessionNotes.length}
                 </span>
               )}
-              {tab.id === 'documents' && documents.length > 0 && (
+              {tab.id === 'documents' && tabData.documents && tabData.documents.length > 0 && (
                 <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
-                  {documents.length}
+                  {tabData.documents.length}
                 </span>
               )}
             </button>
@@ -175,14 +197,39 @@ export default function ClientDetailTabs({
 
       {/* Tab panels */}
       {activeTab === 'profile' && <ProfileTab client={client} />}
-      {activeTab === 'funding' && <FundingTab allocations={allocations} client={client} />}
-      {activeTab === 'appointments' && <AppointmentsTab events={events} />}
-      {activeTab === 'reports' && <ReportsTab notes={sessionNotes} />}
-      {activeTab === 'invoices' && <InvoicesTab invoices={invoices} client={client} />}
-      {activeTab === 'documents' && (
+
+      {activeTab !== 'profile' && loadingTab === activeTab && <TabSkeleton />}
+
+      {activeTab !== 'profile' && tabError === activeTab && (
+        <Card>
+          <div className="py-8 text-center">
+            <p className="text-sm text-red-600">Failed to load. Please try again.</p>
+            <button
+              onClick={() => handleTabClick(activeTab)}
+              className="mt-3 text-sm font-medium text-brand-600 hover:underline"
+            >
+              Retry
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {activeTab === 'funding' && loadingTab !== 'funding' && tabError !== 'funding' && (
+        <FundingTab allocations={tabData.allocations ?? []} client={client} />
+      )}
+      {activeTab === 'appointments' && loadingTab !== 'appointments' && tabError !== 'appointments' && (
+        <AppointmentsTab events={tabData.events ?? []} />
+      )}
+      {activeTab === 'reports' && loadingTab !== 'reports' && tabError !== 'reports' && (
+        <ReportsTab notes={tabData.sessionNotes ?? []} />
+      )}
+      {activeTab === 'invoices' && loadingTab !== 'invoices' && tabError !== 'invoices' && (
+        <InvoicesTab invoices={tabData.invoices ?? []} client={client} />
+      )}
+      {activeTab === 'documents' && loadingTab !== 'documents' && tabError !== 'documents' && (
         <DocumentsTab
           clientId={client.id}
-          documents={documents}
+          documents={tabData.documents ?? []}
           practitionerRole={practitionerRole}
         />
       )}
@@ -199,15 +246,36 @@ export default function ClientDetailTabs({
 }
 
 // ---------------------------------------------------------------------------
+// Inline tab loading skeleton
+// ---------------------------------------------------------------------------
+
+function TabSkeleton() {
+  return (
+    <Card padding="sm">
+      <div className="space-y-0 divide-y divide-gray-50">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="flex items-center gap-4 px-4 py-3.5">
+            <div className="h-4 w-20 animate-pulse rounded bg-gray-100" />
+            <div className="h-4 w-28 animate-pulse rounded bg-gray-100" />
+            <div className="h-4 w-24 animate-pulse rounded bg-gray-100" />
+            <div className="ml-auto h-5 w-16 animate-pulse rounded-full bg-gray-100" />
+          </div>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Profile tab
 // ---------------------------------------------------------------------------
 
 function ProfileTab({ client }: { client: ClientRow }) {
   const contactFields: { label: string; value: string | null }[] = [
-    { label: 'Email', value: client.email },
-    { label: 'Phone', value: client.phone },
+    { label: 'Email',         value: client.email },
+    { label: 'Phone',         value: client.phone },
     { label: 'Date of birth', value: client.date_of_birth ? formatDate(client.date_of_birth) : null },
-    { label: 'Address', value: client.address },
+    { label: 'Address',       value: client.address },
   ]
 
   return (
@@ -243,10 +311,10 @@ function ProfileTab({ client }: { client: ClientRow }) {
 // ---------------------------------------------------------------------------
 
 const INVOICE_STATUS_COLORS: Record<string, 'gray' | 'green' | 'amber' | 'red' | 'blue'> = {
-  draft: 'gray',
-  sent: 'blue',
-  paid: 'green',
-  overdue: 'red',
+  draft:     'gray',
+  sent:      'blue',
+  paid:      'green',
+  overdue:   'red',
   cancelled: 'gray',
 }
 
@@ -270,7 +338,6 @@ function EventTable({ rows, label }: { rows: ClientEventRow[]; label: string }) 
           <tbody>
             {rows.map((ev) => (
               <tr key={`${ev.source}-${ev.id}`} className="border-b border-gray-50 last:border-0">
-                {/* Date */}
                 <td className="px-4 py-3 font-medium text-gray-900">
                   {ev.appointment_href ? (
                     <Link href={ev.appointment_href} className="hover:text-brand-600">
@@ -280,27 +347,17 @@ function EventTable({ rows, label }: { rows: ClientEventRow[]; label: string }) 
                     ev.formatted_date
                   )}
                 </td>
-
-                {/* Time */}
                 <td className="px-4 py-3 text-gray-500">
                   {ev.start_time_display && ev.end_time_display
                     ? `${ev.start_time_display} – ${ev.end_time_display}`
                     : ev.start_time_display ?? '—'}
                 </td>
-
-                {/* Service */}
-                <td className="px-4 py-3 text-gray-600">
-                  {ev.service_name ?? '—'}
-                </td>
-
-                {/* Session status */}
+                <td className="px-4 py-3 text-gray-600">{ev.service_name ?? '—'}</td>
                 <td className="px-4 py-3">
                   <Badge color={STATUS_COLORS[ev.status] ?? 'gray'}>
                     {ev.status.replace('_', ' ')}
                   </Badge>
                 </td>
-
-                {/* Invoice status */}
                 <td className="px-4 py-3">
                   {ev.invoice_id ? (
                     <Link href={`/dashboard/invoices/${ev.invoice_id}`} className="inline-flex" onClick={(e) => e.stopPropagation()}>
@@ -324,14 +381,13 @@ function AppointmentsTab({ events }: { events: ClientEventRow[] }) {
     return <EmptyState message="No appointments or sessions recorded yet." />
   }
 
-  // Split into upcoming (today or future) and past using sort_date (YYYY-MM-DD)
-  const todayStr = new Date().toLocaleDateString('en-CA')  // en-CA gives YYYY-MM-DD in local time
+  const todayStr = new Date().toLocaleDateString('en-CA')
   const upcoming = events
     .filter((e) => e.sort_date >= todayStr)
-    .sort((a, b) => a.sort_date.localeCompare(b.sort_date))  // earliest first
+    .sort((a, b) => a.sort_date.localeCompare(b.sort_date))
   const past = events
     .filter((e) => e.sort_date < todayStr)
-    .sort((a, b) => b.sort_date.localeCompare(a.sort_date))  // newest first
+    .sort((a, b) => b.sort_date.localeCompare(a.sort_date))
 
   return (
     <div className="space-y-6">
@@ -354,11 +410,11 @@ function AppointmentsTab({ events }: { events: ClientEventRow[] }) {
 
 const NDIS_SECTION_LABELS: { key: keyof NDISNotes; label: string }[] = [
   { key: 'participant_presentation', label: 'Participant Presentation' },
-  { key: 'supports_delivered', label: 'Supports Delivered' },
-  { key: 'participant_response', label: 'Participant Response' },
-  { key: 'progress_toward_goals', label: 'Progress Toward Goals' },
-  { key: 'risks_incidents', label: 'Risks / Incidents' },
-  { key: 'next_steps', label: 'Next Steps' },
+  { key: 'supports_delivered',       label: 'Supports Delivered' },
+  { key: 'participant_response',     label: 'Participant Response' },
+  { key: 'progress_toward_goals',    label: 'Progress Toward Goals' },
+  { key: 'risks_incidents',          label: 'Risks / Incidents' },
+  { key: 'next_steps',               label: 'Next Steps' },
 ]
 
 function NdisNotesSections({ ndis }: { ndis: NDISNotes }) {
@@ -378,17 +434,16 @@ function NdisNotesSections({ ndis }: { ndis: NDISNotes }) {
 
 function TherapyNotesSections({ therapy }: { therapy: TherapyNotes }) {
   const obsGroups: { label: string; values: string[] }[] = [
-    { label: 'Engagement', values: therapy.obs_engagement },
-    { label: 'Emotional Regulation', values: therapy.obs_emotional_regulation },
-    { label: 'Communication', values: therapy.obs_communication },
-    { label: 'Social Interaction', values: therapy.obs_social_interaction },
-    { label: 'Behaviour of Concern', values: therapy.obs_behaviour_of_concern },
+    { label: 'Engagement',              values: therapy.obs_engagement },
+    { label: 'Emotional Regulation',    values: therapy.obs_emotional_regulation },
+    { label: 'Communication',           values: therapy.obs_communication },
+    { label: 'Social Interaction',      values: therapy.obs_social_interaction },
+    { label: 'Behaviour of Concern',    values: therapy.obs_behaviour_of_concern },
   ]
   const hasObs = obsGroups.some(({ values }) => values.length > 0)
 
   return (
     <div className="space-y-4">
-      {/* Focus */}
       {(therapy.focus_areas.length > 0 || therapy.focus_other.trim()) && (
         <div className="rounded-lg bg-gray-50 px-3 py-2.5">
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Focus of the Session</p>
@@ -409,7 +464,6 @@ function TherapyNotesSections({ therapy }: { therapy: TherapyNotes }) {
         </div>
       )}
 
-      {/* Observations */}
       {hasObs && (
         <div className="rounded-lg bg-gray-50 px-3 py-2.5">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Session Observations</p>
@@ -424,7 +478,6 @@ function TherapyNotesSections({ therapy }: { therapy: TherapyNotes }) {
         </div>
       )}
 
-      {/* Session Note */}
       {therapy.session_note.trim() && (
         <div className="rounded-lg bg-gray-50 px-3 py-2.5">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Session Note</p>
@@ -432,7 +485,6 @@ function TherapyNotesSections({ therapy }: { therapy: TherapyNotes }) {
         </div>
       )}
 
-      {/* Strategies */}
       {(therapy.strategies_used.length > 0 || therapy.strategies_other.trim()) && (
         <div className="rounded-lg bg-gray-50 px-3 py-2.5">
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Strategies Used</p>
@@ -453,7 +505,6 @@ function TherapyNotesSections({ therapy }: { therapy: TherapyNotes }) {
         </div>
       )}
 
-      {/* Response */}
       {(therapy.response_to_strategies || therapy.response_comment.trim()) && (
         <div className="rounded-lg bg-gray-50 px-3 py-2.5">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Response to Strategies</p>
@@ -466,7 +517,6 @@ function TherapyNotesSections({ therapy }: { therapy: TherapyNotes }) {
         </div>
       )}
 
-      {/* Follow Up */}
       {(therapy.follow_up.length > 0 || therapy.follow_up_notes.trim()) && (
         <div className="rounded-lg bg-gray-50 px-3 py-2.5">
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Follow Up</p>
@@ -484,7 +534,6 @@ function TherapyNotesSections({ therapy }: { therapy: TherapyNotes }) {
         </div>
       )}
 
-      {/* Plan */}
       {(therapy.plan_for_next.length > 0 || therapy.plan_notes.trim()) && (
         <div className="rounded-lg bg-gray-50 px-3 py-2.5">
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Plan for Next Session</p>
@@ -575,12 +624,10 @@ function InvoicesTab({ invoices, client }: { invoices: InvoiceRow[]; client: Cli
     return <EmptyState message="No invoices issued yet." />
   }
 
-  // Derive the billing destination for invoices that pre-date recipient fields
   const derived = resolveInvoiceRecipient(client)
 
   return (
     <div className="space-y-4">
-      {/* Billing destination banner */}
       <BillingDestinationBanner client={client} />
 
       <Card padding="sm">
@@ -597,7 +644,6 @@ function InvoicesTab({ invoices, client }: { invoices: InvoiceRow[]; client: Cli
           </thead>
           <tbody>
             {invoices.map((inv) => {
-              // Prefer stored recipient; fall back to derived for old invoices
               const recipType = inv.recipient_type ?? derived.recipient_type
               const recipName = inv.recipient_name ?? derived.recipient_name
               const isNdia = recipType === 'ndia_claim'
@@ -625,9 +671,7 @@ function InvoicesTab({ invoices, client }: { invoices: InvoiceRow[]; client: Cli
                     {inv.due_at ? formatDate(inv.due_at) : '—'}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge color={INVOICE_COLORS[inv.status] ?? 'gray'}>
-                      {inv.status}
-                    </Badge>
+                    <Badge color={INVOICE_COLORS[inv.status] ?? 'gray'}>{inv.status}</Badge>
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
                     {formatCurrency(inv.total_cents, inv.currency)}
@@ -644,7 +688,6 @@ function InvoicesTab({ invoices, client }: { invoices: InvoiceRow[]; client: Cli
 
 function BillingDestinationBanner({ client }: { client: ClientRow }) {
   const recipient = resolveInvoiceRecipient(client)
-
   const isNdia = recipient.recipient_type === 'ndia_claim'
   const isPlan = recipient.recipient_type === 'plan_manager'
   const isSelf = recipient.recipient_type === 'self_manager'
@@ -696,7 +739,7 @@ function BillingDestinationBanner({ client }: { client: ClientRow }) {
 }
 
 // ---------------------------------------------------------------------------
-// Funding card
+// Funding card (profile tab)
 // ---------------------------------------------------------------------------
 
 function FundingCard({ client }: { client: ClientRow }) {
@@ -722,17 +765,17 @@ function FundingCard({ client }: { client: ClientRow }) {
         {client.funding_type === 'NDIS' && (
           <>
             <DlRow label="NDIS number" value={client.ndis_number} />
-            <DlRow label="Management" value={client.ndis_management_type} />
+            <DlRow label="Management"  value={client.ndis_management_type} />
 
             {isSelf && (client.self_manager_name || client.self_manager_email || client.self_manager_phone) && (
               <>
                 <div className="border-t border-gray-100 pt-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Self-manager</p>
                 </div>
-                <DlRow label="Name" value={client.self_manager_name} />
+                <DlRow label="Name"     value={client.self_manager_name} />
                 <DlRow label="Relation" value={client.self_manager_relation} />
-                <DlRow label="Email" value={client.self_manager_email} />
-                <DlRow label="Phone" value={client.self_manager_phone} />
+                <DlRow label="Email"    value={client.self_manager_email} />
+                <DlRow label="Phone"    value={client.self_manager_phone} />
               </>
             )}
 
@@ -741,7 +784,7 @@ function FundingCard({ client }: { client: ClientRow }) {
                 <div className="border-t border-gray-100 pt-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Plan manager</p>
                 </div>
-                <DlRow label="Name" value={client.plan_manager_name} />
+                <DlRow label="Name"  value={client.plan_manager_name} />
                 <DlRow label="Email" value={client.plan_manager_email} />
                 <DlRow label="Phone" value={client.plan_manager_phone} />
               </>

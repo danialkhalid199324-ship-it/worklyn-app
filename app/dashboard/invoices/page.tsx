@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getInvoices, getClients, getOrgSettings } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getInvoices, getClients, getOrgSettings } from '@/lib/db'
 import { getNextInvoiceNumber } from '@/app/actions/invoices'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import InvoicesClient from './InvoicesClient'
@@ -8,8 +8,7 @@ import InvoicesClient from './InvoicesClient'
 export const metadata: Metadata = { title: 'Invoices' }
 
 export default async function InvoicesPage() {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
 
   // Auto-mark overdue: flip sent invoices whose due_at has passed.
   // Runs on every page load — safe, targeted, no side-effects on other fields.

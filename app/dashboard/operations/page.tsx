@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase-server'
 import OperationsClient from './OperationsClient'
 import type { SessionRow, InvoiceRow } from '@/types/database'
@@ -70,8 +69,7 @@ export default async function OperationsPage({
 }: {
   searchParams: { range?: string }
 }) {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { user, practitioner } = await requireAuthWithPractitioner()
   const practitionerRole = practitioner.role as string | undefined
   const isAdmin = !practitionerRole || practitionerRole === 'admin'
 

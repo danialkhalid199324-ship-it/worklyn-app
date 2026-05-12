@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { requireAuth } from '@/lib/auth'
-import { getPractitionerByUserId, getInvoiceById, getOrgSettings, getSessionsByInvoice, getClients } from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getInvoiceById, getOrgSettings, getSessionsByInvoice, getClients } from '@/lib/db'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import InvoiceDetailClient from './InvoiceDetailClient'
 import type { ClientRow, InvoiceAuditLogRow, InvoiceItemRow } from '@/types/database'
@@ -14,8 +14,7 @@ export default async function InvoiceDetailPage({
   params: { id: string }
 }) {
   const { id } = params
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
 
   let invoice
   try {

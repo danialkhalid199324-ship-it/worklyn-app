@@ -1,15 +1,7 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
-import { requireAuth } from '@/lib/auth'
-import {
-  getPractitionerByUserId,
-  getClientById,
-  getClientEvents,
-  getClientInvoices,
-  getClientSessionNotes,
-  getClientFundingAllocations,
-  getClientDocuments,
-} from '@/lib/db'
+import { requireAuthWithPractitioner } from '@/lib/auth'
+import { getClientById } from '@/lib/db'
 import ClientDetailTabs from './ClientDetailTabs'
 
 interface Props {
@@ -21,8 +13,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function ClientDetailPage({ params }: Props) {
-  const user = await requireAuth()
-  const practitioner = await getPractitionerByUserId(user.id)
+  const { practitioner } = await requireAuthWithPractitioner()
 
   let client
   try {
@@ -31,22 +22,9 @@ export default async function ClientDetailPage({ params }: Props) {
     notFound()
   }
 
-  const [events, invoices, sessionNotes, allocations, documents] = await Promise.all([
-    getClientEvents(practitioner.id, params.id),
-    getClientInvoices(practitioner.id, params.id),
-    getClientSessionNotes(practitioner.id, params.id),
-    getClientFundingAllocations(practitioner.id, params.id).catch(() => []),
-    getClientDocuments(practitioner.id, params.id).catch(() => []),
-  ])
-
   return (
     <ClientDetailTabs
       client={client}
-      events={events}
-      invoices={invoices}
-      sessionNotes={sessionNotes}
-      allocations={allocations}
-      documents={documents}
       practitionerRole={practitioner.role}
     />
   )
