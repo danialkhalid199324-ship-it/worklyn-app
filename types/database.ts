@@ -240,6 +240,7 @@ export interface InvoiceRow {
   due_at: string | null
   paid_at: string | null
   invoice_sent_at: string | null
+  overdue_reminder_sent_at: string | null
   payment_reference: string | null
   payment_notes: string | null
   remittance_received_at: string | null

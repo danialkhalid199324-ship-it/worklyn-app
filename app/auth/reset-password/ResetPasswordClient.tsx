@@ -19,44 +19,50 @@ export default function ResetPasswordClient({ error }: { error?: string }) {
   useEffect(() => {
     const supabase = createClient()
 
-    // 1. PKCE flow — Supabase appends ?code= to the redirect URL
-    const searchParams = new URLSearchParams(window.location.search)
-    const code = searchParams.get('code')
-    if (code) {
-      supabase.auth.exchangeCodeForSession(code).then(({ error: err }) => {
-        setStatus(err ? 'expired' : 'ready')
-      })
-      return
-    }
-
-    // 2. Implicit flow — Supabase appends #access_token=...&type=recovery
-    //    Hash fragments are never sent to the server, so we handle them here.
-    if (window.location.hash) {
-      const hashParams = new URLSearchParams(window.location.hash.slice(1))
-      const accessToken = hashParams.get('access_token')
-      const refreshToken = hashParams.get('refresh_token')
-      const type = hashParams.get('type')
-      if (accessToken && refreshToken && type === 'recovery') {
-        supabase.auth
-          .setSession({ access_token: accessToken, refresh_token: refreshToken })
-          .then(({ error: err }) => {
-            setStatus(err ? 'expired' : 'ready')
-          })
+    async function init() {
+      // Always check for an existing valid session first. This handles:
+      // - page refresh after successful code exchange (code already consumed)
+      // - returning to the form after a server-side validation error redirect
+      // - server-side /auth/confirm route that already exchanged the code
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        setStatus('ready')
         return
       }
+
+      // PKCE flow — Supabase appends ?code= to the redirect URL
+      const params = new URLSearchParams(window.location.search)
+      const code = params.get('code')
+      if (code) {
+        // Strip code from URL before exchange so a page refresh won't
+        // attempt a second exchange with an already-consumed single-use code.
+        window.history.replaceState({}, '', window.location.pathname)
+        const { error: err } = await supabase.auth.exchangeCodeForSession(code)
+        setStatus(err ? 'expired' : 'ready')
+        return
+      }
+
+      // Implicit flow — Supabase appends #access_token=...&type=recovery
+      if (window.location.hash) {
+        const hashParams = new URLSearchParams(window.location.hash.slice(1))
+        const accessToken = hashParams.get('access_token')
+        const refreshToken = hashParams.get('refresh_token')
+        const type = hashParams.get('type')
+        if (accessToken && refreshToken && type === 'recovery') {
+          const { error: err } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          })
+          setStatus(err ? 'expired' : 'ready')
+          return
+        }
+      }
+
+      // No token or session found — link is expired, already used, or direct navigation
+      setStatus('expired')
     }
 
-    // 3. Existing session — arrived via server-side /auth/confirm route (PKCE
-    //    exchange done there, session already in cookies).
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') setStatus('ready')
-    })
-
-    supabase.auth.getSession().then(({ data }) => {
-      setStatus(data.session ? 'ready' : 'expired')
-    })
-
-    return () => subscription.unsubscribe()
+    init()
   }, [])
 
   if (status === 'checking') {

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase-server'
 import { sendSessionNotification } from '@/lib/session-notifications'
+import { sendEmail } from '@/lib/email'
+import { invoiceOverdueReminderEmail } from '@/lib/email-templates'
 import type { NotificationType, PractitionerRow, SessionRow } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -164,9 +166,119 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Overdue invoice reminders ─────────────────────────────────────────────
+  // Fires once per overdue invoice: status IN ('sent','overdue'), past due_at,
+  // not paid, and overdue_reminder_sent_at IS NULL (not yet reminded).
+  // Sets overdue_reminder_sent_at + bumps status to 'overdue' on success.
+
+  const invoiceResults = { checked: 0, sent: 0, skipped: 0, failed: 0 }
+
+  for (const practitioner of (practitioners ?? []) as PractitionerRow[]) {
+    const practitionerEmail = userEmailMap[practitioner.user_id] ?? ''
+
+    // Fetch org settings once per practitioner (non-fatal if missing)
+    let businessName = `${practitioner.first_name} ${practitioner.last_name}`
+    let orgBsb: string | null = null
+    let orgBankName: string | null = null
+    let orgAccountNumber: string | null = null
+    let orgPayRefPrefix: string | null = null
+    try {
+      const { data: org } = await admin
+        .from('org_settings')
+        .select('business_name, bsb, bank_account_name, account_number, payment_reference_prefix')
+        .eq('practitioner_id', practitioner.id)
+        .maybeSingle()
+      if (org?.business_name) businessName = org.business_name
+      orgBsb = org?.bsb ?? null
+      orgBankName = org?.bank_account_name ?? null
+      orgAccountNumber = org?.account_number ?? null
+      orgPayRefPrefix = org?.payment_reference_prefix ?? null
+    } catch { /* non-fatal */ }
+
+    const { data: overdueInvoices, error: invErr } = await admin
+      .from('invoices')
+      .select('id, invoice_number, total_cents, currency, due_at, recipient_name, recipient_email, status')
+      .eq('practitioner_id', practitioner.id)
+      .in('status', ['sent', 'overdue'])
+      .lt('due_at', todayStr)
+      .is('paid_at', null)
+      .is('overdue_reminder_sent_at', null)
+
+    if (invErr) {
+      console.error('[reminders] invoice fetch error for practitioner', practitioner.id, invErr.message)
+      continue
+    }
+
+    for (const invoice of (overdueInvoices ?? [])) {
+      invoiceResults.checked++
+
+      if (!invoice.recipient_email) {
+        invoiceResults.skipped++
+        continue
+      }
+
+      const total = new Intl.NumberFormat('en-AU', {
+        style: 'currency',
+        currency: invoice.currency ?? 'AUD',
+      }).format(invoice.total_cents / 100)
+
+      const dueDate = invoice.due_at
+        ? new Date(invoice.due_at).toLocaleDateString('en-AU', {
+            day: 'numeric', month: 'long', year: 'numeric',
+          })
+        : 'N/A'
+
+      const payRef = orgPayRefPrefix
+        ? `${orgPayRefPrefix}-${invoice.invoice_number}`
+        : invoice.invoice_number
+
+      const html = invoiceOverdueReminderEmail({
+        recipientName: invoice.recipient_name ?? 'there',
+        businessName,
+        invoiceNumber: invoice.invoice_number,
+        total,
+        dueDate,
+        practitionerEmail,
+        bsb: orgBsb,
+        bankAccountName: orgBankName,
+        accountNumber: orgAccountNumber,
+        paymentReference: payRef,
+      })
+
+      try {
+        await sendEmail({
+          to: invoice.recipient_email,
+          toName: invoice.recipient_name ?? undefined,
+          subject: `Overdue: Invoice ${invoice.invoice_number} from ${businessName} — ${total}`,
+          html,
+          replyTo: practitionerEmail || undefined,
+        })
+
+        await admin
+          .from('invoices')
+          .update({ overdue_reminder_sent_at: now.toISOString(), status: 'overdue' })
+          .eq('id', invoice.id)
+          .eq('practitioner_id', practitioner.id)
+
+        console.log(
+          `[reminders] overdue reminder sent | invoice=${invoice.invoice_number}`,
+          `practitioner=${practitioner.id} recipient=${invoice.recipient_email}`,
+        )
+        invoiceResults.sent++
+      } catch (err) {
+        console.error(
+          '[reminders] overdue invoice send failed | invoice', invoice.invoice_number,
+          '| practitioner', practitioner.id, '|', err,
+        )
+        invoiceResults.failed++
+      }
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     timestamp: now.toISOString(),
-    ...results,
+    sessions: results,
+    invoices: invoiceResults,
   })
 }

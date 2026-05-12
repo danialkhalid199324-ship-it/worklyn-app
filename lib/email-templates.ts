@@ -241,6 +241,60 @@ export function sessionCancellationEmail(data: SessionEmailData): string {
 }
 
 // ---------------------------------------------------------------------------
+// Overdue invoice reminder email (sent by cron to the invoice recipient)
+// ---------------------------------------------------------------------------
+
+export interface InvoiceOverdueReminderData {
+  recipientName: string
+  businessName: string
+  invoiceNumber: string
+  total: string       // pre-formatted, e.g. "AU$250.00"
+  dueDate: string     // pre-formatted, e.g. "1 April 2026"
+  practitionerEmail: string
+  bsb?: string | null
+  bankAccountName?: string | null
+  accountNumber?: string | null
+  paymentReference?: string | null
+}
+
+export function invoiceOverdueReminderEmail(data: InvoiceOverdueReminderData): string {
+  const bankHtml = data.bsb ? `
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:16px 0;">
+      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#111827;">Payment details</p>
+      <table style="font-size:13px;border-collapse:collapse;">
+        ${data.bankAccountName ? `<tr><td style="padding:3px 12px 3px 0;color:#6b7280;">Account name</td><td style="padding:3px 0;font-weight:500;">${data.bankAccountName}</td></tr>` : ''}
+        <tr><td style="padding:3px 12px 3px 0;color:#6b7280;">BSB</td><td style="padding:3px 0;font-weight:500;">${data.bsb}</td></tr>
+        ${data.accountNumber ? `<tr><td style="padding:3px 12px 3px 0;color:#6b7280;">Account number</td><td style="padding:3px 0;font-weight:500;">${data.accountNumber}</td></tr>` : ''}
+        ${data.paymentReference ? `<tr><td style="padding:3px 12px 3px 0;color:#6b7280;">Reference</td><td style="padding:3px 0;font-weight:500;">${data.paymentReference}</td></tr>` : ''}
+      </table>
+    </div>` : ''
+
+  return container(`
+    ${header('Payment overdue')}
+    <tr>
+      <td style="padding:28px 32px;">
+        <p style="margin:0 0 20px; font-size:15px; color:#374151;">
+          Hi <strong>${data.recipientName}</strong>,<br/>
+          This is a reminder that the following invoice from
+          <strong>${data.businessName}</strong> is now overdue.
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:4px;">
+          ${row('Invoice', data.invoiceNumber)}
+          ${row('Amount due', `<span style="font-weight:700;color:#dc2626;">${data.total}</span>`)}
+          ${row('Due date', `<span style="color:#dc2626;">${data.dueDate}</span>`)}
+        </table>
+        ${bankHtml}
+        <p style="margin:16px 0 0; font-size:13px; color:#6b7280;">
+          If you have already paid, please disregard this message or reply to confirm.
+          Questions? Contact us at
+          <a href="mailto:${data.practitionerEmail}" style="color:#6366f1;">${data.practitionerEmail}</a>.
+        </p>
+      </td>
+    </tr>
+  `)
+}
+
+// ---------------------------------------------------------------------------
 // Practitioner notification email
 // ---------------------------------------------------------------------------
 export function practitionerNotificationEmail(data: BookingConfirmationData): string {

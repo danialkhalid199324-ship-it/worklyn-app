@@ -135,7 +135,12 @@ export async function requestPasswordReset(formData: FormData) {
 
   if (error) {
     console.error('[requestPasswordReset] error:', error.message, error)
-    redirect('/auth/forgot-password?error=' + encodeURIComponent(error.message))
+    const lower = error.message.toLowerCase()
+    const userMsg =
+      lower.includes('rate') || lower.includes('security purposes') || lower.includes('wait') || lower.includes('too many')
+        ? 'Too many reset attempts. Please wait a few minutes before trying again.'
+        : 'Failed to send reset email. Please try again or contact support.'
+    redirect('/auth/forgot-password?error=' + encodeURIComponent(userMsg))
   }
 
   console.log('[requestPasswordReset] reset email dispatched for:', email)
