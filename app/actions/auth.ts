@@ -155,18 +155,30 @@ export async function updatePassword(formData: FormData) {
   }
 
   const supabase = await createServerSupabaseClient()
-
   const { data: { user } } = await supabase.auth.getUser()
-  console.log('[updatePassword] session user:', user?.id ?? 'none')
 
-  const { error } = await supabase.auth.updateUser({ password })
+  if (!user) {
+    redirect('/auth/reset-password?error=' + encodeURIComponent('Session expired. Please request a new password reset link.'))
+  }
+
+  console.log('[updatePassword] session user:', user.id)
+
+  // Recovery sessions stay at AAL1, but supabase.auth.updateUser() requires
+  // AAL2 when MFA is enabled. The admin client bypasses this gate — safe here
+  // because the recovery email link already proved ownership of the account.
+  const { error } = await createAdminClient().auth.admin.updateUserById(
+    user.id,
+    { password },
+  )
 
   if (error) {
     console.error('[updatePassword] error:', error.message, error)
     redirect('/auth/reset-password?error=' + encodeURIComponent(error.message))
   }
 
-  console.log('[updatePassword] password updated for user:', user?.id)
+  console.log('[updatePassword] password updated for user:', user.id)
+  // Sign out the recovery session so the user logs in fresh with the new password.
+  await supabase.auth.signOut()
   revalidatePath('/', 'layout')
   redirect('/auth/login?message=' + encodeURIComponent('Password updated successfully. Please sign in.'))
 }
