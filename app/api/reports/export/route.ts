@@ -5,7 +5,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { getPeriodDates, type Period } from '@/lib/reports'
 
 const VALID_PERIODS: Period[] = ['this_month', 'last_month', 'last_3_months', 'this_year']
-const VALID_TYPES = ['overdue-invoices', 'clients', 'sessions', 'financial-summary'] as const
+const VALID_TYPES = ['overdue-invoices', 'clients', 'sessions', 'financial-summary', 'practitioner-utilisation', 'compliance-exceptions'] as const
 type ExportType = (typeof VALID_TYPES)[number]
 
 const fmtAUD = (cents: number) =>
@@ -294,6 +294,226 @@ async function buildFinancialSummary(pid: string, from: string, to: string, peri
 }
 
 // ---------------------------------------------------------------------------
+// Practitioner utilisation
+// ---------------------------------------------------------------------------
+
+async function buildPractitionerUtilisation(pid: string, from: string, to: string, periodLabel: string): Promise<string> {
+  const supabase = await createServerSupabaseClient()
+
+  type SRow = {
+    service_date: string
+    status: string
+    duration_minutes: number
+    rate: number
+    invoice_id: string | null
+    services: { name: string } | null
+  }
+
+  const { data } = await supabase
+    .from('sessions')
+    .select('service_date, status, duration_minutes, rate, invoice_id, services(name)')
+    .eq('practitioner_id', pid)
+    .gte('service_date', from)
+    .lte('service_date', to)
+    .order('service_date', { ascending: true })
+
+  const sessions = (data ?? []) as unknown as SRow[]
+
+  const total     = sessions.length
+  const completed = sessions.filter(s => s.status === 'completed').length
+  const cancelled = sessions.filter(s => s.status === 'cancelled').length
+  const scheduled = sessions.filter(s => s.status === 'scheduled').length
+  const hours     = parseFloat(
+    (sessions.filter(s => s.status === 'completed')
+      .reduce((s, sess) => s + sess.duration_minutes, 0) / 60).toFixed(2)
+  )
+  const completionRate = completed + cancelled > 0
+    ? `${Math.round((completed / (completed + cancelled)) * 100)}%`
+    : '—'
+
+  const serviceMap: Record<string, { name: string; total: number; completed: number; mins: number; revenue: number }> = {}
+  for (const s of sessions) {
+    const name = s.services?.name ?? 'Unspecified'
+    if (!serviceMap[name]) serviceMap[name] = { name, total: 0, completed: 0, mins: 0, revenue: 0 }
+    serviceMap[name].total++
+    if (s.status === 'completed') {
+      serviceMap[name].completed++
+      serviceMap[name].mins += s.duration_minutes
+      serviceMap[name].revenue += Math.round(s.rate * (s.duration_minutes / 60) * 100)
+    }
+  }
+
+  const genDate = new Date().toLocaleDateString('en-AU')
+  const lines: string[] = []
+
+  lines.push(csvRow('Practitioner Utilisation Report'))
+  lines.push(csvRow(`Period: ${periodLabel}`))
+  lines.push(csvRow(`Generated: ${genDate}`))
+  lines.push('')
+  lines.push(csvRow('Metric', 'Value'))
+  lines.push(csvRow('Total Sessions',   total.toString()))
+  lines.push(csvRow('Completed',        completed.toString()))
+  lines.push(csvRow('Cancelled',        cancelled.toString()))
+  lines.push(csvRow('Scheduled',        scheduled.toString()))
+  lines.push(csvRow('Completion Rate',  completionRate))
+  lines.push(csvRow('Hours Delivered',  hours.toString()))
+  lines.push('')
+
+  lines.push(csvRow('Utilisation by Service'))
+  lines.push(csvRow('Service', 'Total Sessions', 'Completed', 'Completion Rate', 'Hours', 'Revenue (AUD)'))
+  for (const s of Object.values(serviceMap).sort((a, b) => b.total - a.total)) {
+    const rate = s.total > 0 ? `${Math.round((s.completed / s.total) * 100)}%` : '—'
+    lines.push(csvRow(
+      s.name,
+      s.total,
+      s.completed,
+      rate,
+      parseFloat((s.mins / 60).toFixed(2)),
+      fmtAUD(s.revenue),
+    ))
+  }
+
+  return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// Compliance exceptions
+// ---------------------------------------------------------------------------
+
+async function buildComplianceExceptions(pid: string): Promise<string> {
+  const supabase = await createServerSupabaseClient()
+
+  const today = new Date()
+  today.setUTCHours(0, 0, 0, 0)
+  const todayStr = today.toISOString().slice(0, 10)
+
+  type SRow = {
+    id: string
+    service_date: string
+    status: string
+    invoice_id: string | null
+    notes: string | null
+    clients: { first_name: string; last_name: string } | null
+    services: { name: string } | null
+  }
+  type IRow = {
+    invoice_number: string
+    status: string
+    total_cents: number
+    due_at: string | null
+    payment_reference: string | null
+    clients: { first_name: string; last_name: string } | null
+  }
+  type CRow = { id: string; first_name: string; last_name: string }
+  type DocRow = { client_id: string }
+
+  const [sessRes, invRes, clientsRes, docRes] = await Promise.all([
+    supabase
+      .from('sessions')
+      .select('id, service_date, status, invoice_id, notes, clients(first_name, last_name), services(name)')
+      .eq('practitioner_id', pid)
+      .eq('status', 'completed'),
+    supabase
+      .from('invoices')
+      .select('invoice_number, status, total_cents, due_at, payment_reference, clients(first_name, last_name)')
+      .eq('practitioner_id', pid),
+    supabase
+      .from('clients')
+      .select('id, first_name, last_name')
+      .eq('practitioner_id', pid),
+    supabase
+      .from('client_documents')
+      .select('client_id')
+      .eq('practitioner_id', pid),
+  ])
+
+  const sessions  = (sessRes.data ?? []) as unknown as SRow[]
+  const invoices  = (invRes.data  ?? []) as unknown as IRow[]
+  const clients   = (clientsRes.data ?? []) as unknown as CRow[]
+  const docIds    = new Set((docRes.data ?? []).map((r: DocRow) => r.client_id))
+
+  const genDate = new Date().toLocaleDateString('en-AU')
+  const lines: string[] = []
+
+  lines.push(csvRow('Compliance Exceptions Report'))
+  lines.push(csvRow(`Generated: ${genDate}`))
+  lines.push('')
+
+  // 1. Completed sessions missing notes
+  const missingNotes = sessions.filter(s => !s.notes)
+  lines.push(csvRow('1. Completed Sessions Missing Case Notes'))
+  lines.push(csvRow('Session Date', 'Client', 'Service', 'Invoice Linked'))
+  if (missingNotes.length === 0) {
+    lines.push(csvRow('None — all completed sessions have notes', '', '', ''))
+  } else {
+    for (const s of missingNotes.sort((a, b) => a.service_date.localeCompare(b.service_date))) {
+      const client = s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : ''
+      lines.push(csvRow(s.service_date, client, s.services?.name ?? '', s.invoice_id ? 'Yes' : 'No'))
+    }
+  }
+  lines.push('')
+
+  // 2. Uninvoiced completed sessions
+  const uninvoiced = sessions.filter(s => !s.invoice_id)
+  lines.push(csvRow('2. Completed Sessions Not Invoiced'))
+  lines.push(csvRow('Session Date', 'Client', 'Service'))
+  if (uninvoiced.length === 0) {
+    lines.push(csvRow('None — all completed sessions are invoiced', '', ''))
+  } else {
+    for (const s of uninvoiced.sort((a, b) => a.service_date.localeCompare(b.service_date))) {
+      const client = s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : ''
+      lines.push(csvRow(s.service_date, client, s.services?.name ?? ''))
+    }
+  }
+  lines.push('')
+
+  // 3. Overdue invoices
+  const overdueInvs = invoices.filter(inv => inv.status === 'overdue')
+  lines.push(csvRow('3. Overdue Invoices'))
+  lines.push(csvRow('Invoice Number', 'Client', 'Due Date', 'Days Overdue', 'Amount'))
+  if (overdueInvs.length === 0) {
+    lines.push(csvRow('None', '', '', '', ''))
+  } else {
+    for (const inv of overdueInvs) {
+      const days = inv.due_at
+        ? Math.max(0, Math.round((today.getTime() - new Date(inv.due_at + 'T00:00:00').getTime()) / 86_400_000))
+        : ''
+      const client = inv.clients ? `${inv.clients.first_name} ${inv.clients.last_name}` : ''
+      lines.push(csvRow(inv.invoice_number, client, inv.due_at ?? '', days, fmtAUD(inv.total_cents)))
+    }
+  }
+  lines.push('')
+
+  // 4. Paid invoices missing payment reference
+  const missingRef = invoices.filter(inv => inv.status === 'paid' && !inv.payment_reference)
+  lines.push(csvRow('4. Paid Invoices Missing Payment Reference'))
+  lines.push(csvRow('Invoice Number', 'Client', 'Amount'))
+  if (missingRef.length === 0) {
+    lines.push(csvRow('None', '', ''))
+  } else {
+    for (const inv of missingRef) {
+      const client = inv.clients ? `${inv.clients.first_name} ${inv.clients.last_name}` : ''
+      lines.push(csvRow(inv.invoice_number, client, fmtAUD(inv.total_cents)))
+    }
+  }
+  lines.push('')
+
+  // 5. Clients missing documents
+  const missingDocs = clients.filter(c => !docIds.has(c.id))
+  lines.push(csvRow('5. Clients With No Documents on File'))
+  lines.push(csvRow('Client Name'))
+  if (missingDocs.length === 0) {
+    lines.push(csvRow('All clients have documents on file'))
+  } else {
+    for (const c of missingDocs.sort((a, b) => a.last_name.localeCompare(b.last_name))) {
+      lines.push(csvRow(`${c.first_name} ${c.last_name}`))
+    }
+  }
+
+  return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
 // Route handler
 // ---------------------------------------------------------------------------
 
@@ -337,6 +557,14 @@ export async function GET(req: NextRequest) {
     case 'financial-summary':
       csv = await buildFinancialSummary(pid, from, to, label)
       filename = `financial-summary-report-${today}.csv`
+      break
+    case 'practitioner-utilisation':
+      csv = await buildPractitionerUtilisation(pid, from, to, label)
+      filename = `practitioner-utilisation-${today}.csv`
+      break
+    case 'compliance-exceptions':
+      csv = await buildComplianceExceptions(pid)
+      filename = `compliance-exceptions-${today}.csv`
       break
   }
 

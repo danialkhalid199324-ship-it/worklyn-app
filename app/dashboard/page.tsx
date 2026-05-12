@@ -1,7 +1,5 @@
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
-import Card from '@/components/ui/Card'
-import Badge from '@/components/ui/Badge'
 import { requireAuthWithPractitioner } from '@/lib/auth'
 import { getClients, getServices, getNdisPriceGuide, getOrgSettings } from '@/lib/db'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
@@ -10,27 +8,19 @@ import DashboardQuickActions from './DashboardQuickActions'
 
 export const metadata: Metadata = { title: 'Dashboard' }
 
+// Full precision for health panels
 const fmtAUD = (cents: number) =>
   new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(cents / 100)
 
-function statusColor(status: string): 'gray' | 'green' | 'amber' | 'red' | 'blue' | 'purple' {
-  switch (status) {
-    case 'paid':      return 'green'
-    case 'overdue':   return 'red'
-    case 'sent':      return 'blue'
-    case 'draft':     return 'gray'
-    case 'scheduled': return 'blue'
-    case 'completed': return 'green'
-    case 'cancelled': return 'red'
-    default:          return 'gray'
-  }
-}
+// Compact for pills and featured metrics
+const fmtShort = (cents: number) =>
+  new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(cents / 100)
 
-function formatUpcomingDate(dateStr: string, tomorrowStr: string): string {
-  if (dateStr === tomorrowStr) return 'Tomorrow'
-  return new Date(`${dateStr}T12:00:00`).toLocaleDateString('en-AU', {
-    weekday: 'short', day: 'numeric', month: 'short',
-  })
+function greet(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
 }
 
 function daysUntil(dateStr: string): number {
@@ -44,6 +34,7 @@ export default async function DashboardPage() {
   const { practitioner } = await requireAuthWithPractitioner()
   const supabase = await createServerSupabaseClient()
   const pid = practitioner.id
+  const firstName = practitioner.first_name
 
   const now = new Date()
   const today = now.toISOString().slice(0, 10)
@@ -66,7 +57,6 @@ export default async function DashboardPage() {
     activeClientsRes,
     upcomingRes,
     outstandingAmtRes,
-    outstandingListRes,
     revenueRes,
     overdueCountRes,
     draftCountRes,
@@ -75,67 +65,79 @@ export default async function DashboardPage() {
     availabilityRes,
     servicesRes,
     sessionsExistRes,
+    remittancePendingRes,
+    uninvoicedRes,
+    paidTodayRes,
+    missingPaymentRefRes,
+    completedThisMonthRes,
+    cancelledThisMonthRes,
+    clientDocsRes,
+    activeClientIdsRes,
     modalClients,
     modalServices,
     orgSettings,
     nextInvoiceNumber,
   ] = await Promise.all([
-    // Today's sessions (list, all non-cancelled)
     supabase.from('sessions')
       .select('id, service_date, start_time, end_time, status, client_id, clients(id, first_name, last_name), services(name)')
       .eq('practitioner_id', pid).eq('service_date', today).neq('status', 'cancelled')
       .order('start_time', { nullsFirst: false }),
 
-    // Active client count
     supabase.from('clients').select('id', { count: 'exact', head: true })
       .eq('practitioner_id', pid).eq('is_active', true),
 
-    // Upcoming sessions (tomorrow → +7 days, scheduled only)
     supabase.from('sessions')
       .select('id, service_date, start_time, end_time, status, client_id, clients(id, first_name, last_name), services(name)')
       .eq('practitioner_id', pid).eq('status', 'scheduled')
       .gte('service_date', tomorrowStr).lte('service_date', sevenOutStr)
       .order('service_date').order('start_time', { nullsFirst: false }).limit(8),
 
-    // Outstanding invoice amounts + status (for totals and breakdown counts)
     supabase.from('invoices').select('total_cents, status')
       .eq('practitioner_id', pid).in('status', ['draft', 'sent', 'overdue']),
 
-    // Outstanding invoices list for display
-    supabase.from('invoices')
-      .select('id, invoice_number, total_cents, status, due_at, clients(id, first_name, last_name)')
-      .eq('practitioner_id', pid).in('status', ['draft', 'sent', 'overdue'])
-      .order('created_at', { ascending: false }).limit(8),
-
-    // Revenue this month
     supabase.from('invoices').select('total_cents')
       .eq('practitioner_id', pid).eq('status', 'paid').gte('paid_at', monthStart),
 
-    // Overdue invoice count
     supabase.from('invoices').select('id', { count: 'exact', head: true })
       .eq('practitioner_id', pid).eq('status', 'overdue'),
 
-    // Draft invoice count
     supabase.from('invoices').select('id', { count: 'exact', head: true })
       .eq('practitioner_id', pid).eq('status', 'draft'),
 
-    // Completed sessions missing notes (last 90 days)
     supabase.from('sessions').select('id', { count: 'exact', head: true })
       .eq('practitioner_id', pid).eq('status', 'completed')
       .is('notes', null).gte('service_date', ninetyAgoStr),
 
-    // Active funding allocations for alerts
     supabase.from('client_funding_allocations')
-      .select('id, plan_name, plan_end_date, allocated_amount, remaining_amount, utilisation_percentage, client_id, clients(id, first_name, last_name)')
+      .select('id, plan_name, plan_end_date, remaining_amount, utilisation_percentage, client_id')
       .eq('practitioner_id', pid).eq('is_active', true)
       .order('plan_end_date'),
 
-    // Checklist
     supabase.from('availability_rules').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
     supabase.from('services').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
     supabase.from('sessions').select('id', { count: 'exact', head: true }).eq('practitioner_id', pid),
 
-    // Quick-action modal data
+    supabase.from('invoices').select('id', { count: 'exact', head: true })
+      .eq('practitioner_id', pid).eq('status', 'paid').is('remittance_received_at', null),
+
+    supabase.from('sessions').select('id', { count: 'exact', head: true })
+      .eq('practitioner_id', pid).eq('status', 'completed').is('invoice_id', null),
+
+    supabase.from('invoices').select('total_cents')
+      .eq('practitioner_id', pid).eq('status', 'paid').gte('paid_at', today),
+
+    supabase.from('invoices').select('id', { count: 'exact', head: true })
+      .eq('practitioner_id', pid).eq('status', 'paid').is('payment_reference', null),
+
+    supabase.from('sessions').select('id', { count: 'exact', head: true })
+      .eq('practitioner_id', pid).eq('status', 'completed').gte('service_date', monthStart),
+
+    supabase.from('sessions').select('id', { count: 'exact', head: true })
+      .eq('practitioner_id', pid).eq('status', 'cancelled').gte('service_date', monthStart),
+
+    supabase.from('client_documents').select('client_id').eq('practitioner_id', pid),
+    supabase.from('clients').select('id').eq('practitioner_id', pid).eq('is_active', true),
+
     getClients(pid),
     getServices(pid),
     getOrgSettings(pid),
@@ -158,73 +160,148 @@ export default async function DashboardPage() {
     services: { name: string } | null
   }
 
-  type InvoiceItem = {
-    id: string; invoice_number: string; total_cents: number; status: string; due_at: string | null
-    clients: { id: string; first_name: string; last_name: string } | null
-  }
-
   type FundingItem = {
     id: string; plan_name: string; plan_end_date: string
-    allocated_amount: number; remaining_amount: number; utilisation_percentage: number
+    remaining_amount: number; utilisation_percentage: number
     client_id: string
-    clients: { id: string; first_name: string; last_name: string } | null
   }
 
   // ---------------------------------------------------------------------------
   // Derived values
   // ---------------------------------------------------------------------------
 
-  const todaySessions   = (todayRes.data ?? []) as unknown as SessionItem[]
+  const todaySessions    = (todayRes.data ?? []) as unknown as SessionItem[]
   const upcomingSessions = (upcomingRes.data ?? []) as unknown as SessionItem[]
+  const allActivePlans   = (fundingRes.data ?? []) as unknown as FundingItem[]
 
   const outstandingData  = (outstandingAmtRes.data ?? []) as { total_cents: number; status: string }[]
-  const pendingCents     = outstandingData.reduce((s, r) => s + r.total_cents, 0)
-  const sentCount        = outstandingData.filter(r => r.status === 'sent').length
-  const revenueCents     = (revenueRes.data ?? []).reduce((s, r) => s + (r as { total_cents: number }).total_cents, 0)
-  const revenuePaidCount = (revenueRes.data ?? []).length
+  const outstandingCents = outstandingData.reduce((s, r) => s + r.total_cents, 0)
+  const overdueCents     = outstandingData.filter(r => r.status === 'overdue').reduce((s, r) => s + r.total_cents, 0)
 
-  const activeClients    = activeClientsRes.count ?? 0
-  const overdueCount     = overdueCountRes.count ?? 0
-  const draftCount       = draftCountRes.count ?? 0
-  const missingNotesCount = missingNotesRes.count ?? 0
+  const revenueCents   = (revenueRes.data ?? []).reduce((s, r) => s + (r as { total_cents: number }).total_cents, 0)
+  const paidTodayCents = (paidTodayRes.data ?? []).reduce((s, r) => s + (r as { total_cents: number }).total_cents, 0)
 
-  const statusPriority: Record<string, number> = { overdue: 0, sent: 1, draft: 2 }
-  const outstandingInvoices = ((outstandingListRes.data ?? []) as unknown as InvoiceItem[])
-    .sort((a, b) => (statusPriority[a.status] ?? 3) - (statusPriority[b.status] ?? 3))
+  const activeClients      = activeClientsRes.count ?? 0
+  const overdueCount       = overdueCountRes.count ?? 0
+  const draftCount         = draftCountRes.count ?? 0
+  const missingNotesCount  = missingNotesRes.count ?? 0
+  const remittancePending  = remittancePendingRes.count ?? 0
+  const uninvoicedCount    = uninvoicedRes.count ?? 0
+  const missingPaymentRef  = missingPaymentRefRes.count ?? 0
+  const completedThisMonth = completedThisMonthRes.count ?? 0
+  const cancelledThisMonth = cancelledThisMonthRes.count ?? 0
 
-  const allActivePlans = (fundingRes.data ?? []) as unknown as FundingItem[]
-  const fundingAlerts  = allActivePlans
-    .filter(p => Number(p.utilisation_percentage) >= 80 || p.plan_end_date <= thirtyOutStr)
-    .slice(0, 5)
+  const docClientIds = new Set(
+    (clientDocsRes.data ?? []).map((r: { client_id: string }) => r.client_id),
+  )
+  const clientsMissingDocs = (activeClientIdsRes.data ?? []).filter(
+    (c: { id: string }) => !docClientIds.has(c.id),
+  ).length
 
-  const clientsWithFunding   = new Set(allActivePlans.map(p => p.client_id)).size
-  const clientsMissingFunding = Math.max(0, activeClients - clientsWithFunding)
+  const fundingAlerts = allActivePlans.filter(
+    p => Number(p.utilisation_percentage) >= 80 || p.plan_end_date <= thirtyOutStr,
+  )
+  const fundingExpiryCount = allActivePlans.filter(p => p.plan_end_date <= thirtyOutStr).length
 
-  const hasAttention = overdueCount > 0 || missingNotesCount > 0 || draftCount > 0 || fundingAlerts.length > 0 || clientsMissingFunding > 0
+  const completionRate = completedThisMonth + cancelledThisMonth > 0
+    ? Math.round((completedThisMonth / (completedThisMonth + cancelledThisMonth)) * 100)
+    : 100
 
-  const hasClient       = activeClients > 0
+  const totalBilledCents = revenueCents + outstandingCents
+  const collectionRate   = totalBilledCents > 0 ? Math.round((revenueCents / totalBilledCents) * 100) : 0
+
   const hasAvailability = (availabilityRes.count ?? 0) > 0
   const hasService      = (servicesRes.count ?? 0) > 0
   const hasSession      = (sessionsExistRes.count ?? 0) > 0
-  const checklistDone   = hasClient && hasAvailability && hasService && hasSession
+  const checklistDone   = activeClients > 0 && hasAvailability && hasService && hasSession
+
+  const actionItems = [
+    { label: 'Complete missing case notes',   href: '/dashboard/sessions', count: missingNotesCount,  color: 'amber' as const },
+    { label: 'Follow up overdue invoices',    href: '/dashboard/invoices', count: overdueCount,       color: 'red'   as const },
+    { label: 'Review remittance pending',     href: '/dashboard/invoices', count: remittancePending,  color: 'blue'  as const },
+    { label: 'Invoice completed sessions',    href: '/dashboard/sessions', count: uninvoicedCount,    color: 'blue'  as const },
+    { label: 'Clients with expiring funding', href: '/dashboard/clients',  count: fundingExpiryCount, color: 'amber' as const },
+    { label: 'Clients missing documents',     href: '/dashboard/clients',  count: clientsMissingDocs, color: 'amber' as const },
+  ]
+  const urgentCount = actionItems.filter(a => a.count > 0).length
+
+  // First scheduled session at or after current time
+  const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  const nextSessionId =
+    todaySessions.find(s => s.status === 'scheduled' && (s.start_time ?? '99:99') >= nowTimeStr)?.id ??
+    todaySessions.find(s => s.status === 'scheduled')?.id ??
+    null
+
+  const totalComplianceIssues = missingNotesCount + uninvoicedCount + missingPaymentRef + clientsMissingDocs
 
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
-  return (
-    <div className="space-y-6">
+  const dateLabel = now.toLocaleDateString('en-AU', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  })
 
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-            {now.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-          </p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900">
-            Overview
-          </h1>
-        </div>
+  return (
+    <div className="space-y-4">
+
+      {/* ─── Header ─── */}
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">{dateLabel}</p>
+        <h1 className="mt-0.5 text-[26px] font-extrabold tracking-tight text-gray-900">
+          {greet()}, {firstName}
+        </h1>
+      </div>
+
+      {/* ─── Alert bar: 4 metric cards ─── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <AlertCard
+          icon={<WarningIcon />}
+          iconBg="bg-red-50" iconColor="text-red-500"
+          count={overdueCount}
+          label="Overdue invoices"
+          sub={overdueCount > 0 ? `${fmtShort(overdueCents)} overdue` : 'None overdue'}
+          subColor={overdueCount > 0 ? 'text-red-500' : 'text-gray-400'}
+          href="/dashboard/invoices"
+          active={overdueCount > 0}
+          activeBorder="border-red-100"
+        />
+        <AlertCard
+          icon={<ClipboardIcon />}
+          iconBg="bg-amber-50" iconColor="text-amber-500"
+          count={missingNotesCount}
+          label="Missing case notes"
+          sub={missingNotesCount > 0 ? 'Action required' : 'All complete'}
+          subColor={missingNotesCount > 0 ? 'text-amber-500' : 'text-gray-400'}
+          href="/dashboard/sessions"
+          active={missingNotesCount > 0}
+          activeBorder="border-amber-100"
+        />
+        <AlertCard
+          icon={<InboxIcon />}
+          iconBg="bg-blue-50" iconColor="text-blue-500"
+          count={remittancePending}
+          label="Remittance pending"
+          sub={remittancePending > 0 ? `${fmtShort(outstandingCents)} awaiting` : 'None pending'}
+          subColor={remittancePending > 0 ? 'text-blue-500' : 'text-gray-400'}
+          href="/dashboard/invoices"
+          active={remittancePending > 0}
+          activeBorder="border-blue-100"
+        />
+        <AlertCard
+          icon={<ClockIcon />}
+          iconBg="bg-violet-50" iconColor="text-violet-500"
+          count={fundingExpiryCount}
+          label="Funding expiring soon"
+          sub={fundingAlerts.length > 0 ? `${daysUntil(fundingAlerts[0].plan_end_date)}d remaining` : 'None expiring'}
+          subColor={fundingExpiryCount > 0 ? 'text-violet-500' : 'text-gray-400'}
+          active={fundingExpiryCount > 0}
+          activeBorder="border-violet-100"
+        />
+      </div>
+
+      {/* ─── Command bar ─── */}
+      <div className="rounded-2xl border border-gray-100 bg-white px-5 py-3.5 shadow">
         <DashboardQuickActions
           clients={modalClients}
           services={modalServices}
@@ -234,517 +311,423 @@ export default async function DashboardPage() {
         />
       </div>
 
-      {/* Stat cards */}
-      <div className="grid gap-4 grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={<CalIcon />}
-          bg="bg-brand-50"
-          label="Today's sessions"
-          value={todaySessions.length.toString()}
-          valueColor="text-brand-700"
-          sub={
-            overdueCount > 0
-              ? <span className="font-medium text-red-500">{overdueCount} overdue invoice{overdueCount !== 1 ? 's' : ''}</span>
-              : <span>{todaySessions.length === 0 ? 'No sessions today' : `${todaySessions.length} session${todaySessions.length !== 1 ? 's' : ''}`}</span>
-          }
-        />
-        <StatCard
-          icon={<PeopleIcon />}
-          bg="bg-green-50"
-          label="Active clients"
-          value={activeClients.toString()}
-          valueColor="text-green-700"
-          sub={<span>{activeClients === 0 ? 'No clients yet' : `${activeClients} active`}</span>}
-        />
-        <StatCard
-          icon={<InvIcon />}
-          bg="bg-amber-50"
-          label="Pending invoices"
-          value={pendingCents > 0 ? fmtAUD(pendingCents) : '$0'}
-          valueColor={pendingCents > 0 ? 'text-amber-700' : 'text-gray-400'}
-          sub={
-            pendingCents === 0
-              ? <span className="font-medium text-green-600">All clear</span>
-              : <span>
-                  {[
-                    overdueCount > 0 && `${overdueCount} overdue`,
-                    sentCount > 0 && `${sentCount} sent`,
-                    draftCount > 0 && `${draftCount} draft`,
-                  ].filter(Boolean).join(' · ')}
-                </span>
-          }
-        />
-        <StatCard
-          icon={<RevIcon />}
-          bg="bg-purple-50"
-          label="Revenue this month"
-          value={revenueCents > 0 ? fmtAUD(revenueCents) : '$0'}
-          valueColor={revenueCents > 0 ? 'text-purple-700' : 'text-gray-400'}
-          sub={<span>{revenueCents === 0 ? 'No paid invoices yet' : `${revenuePaidCount} paid invoice${revenuePaidCount !== 1 ? 's' : ''}`}</span>}
-        />
-      </div>
+      {/* ─── Main grid: Schedule | Urgent Actions | Financial ─── */}
+      <div className="grid gap-4 lg:grid-cols-3">
 
-      {/* Main grid: today's schedule + action required */}
-      <div className="grid gap-5 lg:grid-cols-3">
-
-        {/* Today + coming up */}
-        <Card className="lg:col-span-2" padding="md">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Today</h2>
-            <a href="/dashboard/calendar" className="text-xs font-medium text-brand-600 hover:underline">Calendar →</a>
+        {/* Today's Schedule */}
+        <div className="rounded-2xl border border-gray-100 bg-white shadow overflow-hidden">
+          <div className="flex items-center justify-between border-b border-gray-50 px-5 py-3.5">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-50">
+                <svg className="h-3.5 w-3.5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-bold text-gray-900">Today&apos;s Schedule</h2>
+              {todaySessions.length > 0 && (
+                <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-600">{todaySessions.length}</span>
+              )}
+            </div>
+            <a href="/dashboard/calendar" className="text-[11px] font-semibold text-brand-600 hover:underline">View calendar</a>
           </div>
 
-          {todaySessions.length === 0 ? (
-            <p className="text-sm text-gray-400 pb-2">No sessions scheduled for today.</p>
-          ) : (
-            <ul className="divide-y divide-gray-50">
-              {todaySessions.map(s => {
-                const name = s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Unknown client'
-                const time = s.start_time
-                  ? s.end_time
-                    ? `${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}`
-                    : s.start_time.slice(0, 5)
-                  : null
-                const initials = s.clients
-                  ? `${s.clients.first_name[0]}${s.clients.last_name[0]}`
-                  : '?'
-                return (
-                  <li key={s.id} className="flex items-center gap-3 py-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand-600 uppercase">
-                      {initials}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <a href={`/dashboard/clients/${s.client_id}`} className="text-sm font-medium text-gray-900 hover:text-brand-600 truncate block">
-                        {name}
-                      </a>
-                      <p className="text-xs text-gray-400 truncate">
-                        {[time, s.services?.name].filter(Boolean).join(' · ')}
-                      </p>
-                    </div>
-                    <Badge color={statusColor(s.status)}>{s.status}</Badge>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-
-          {upcomingSessions.length > 0 && (
-            <>
-              <div className="mt-5 mb-3 flex items-center gap-3">
-                <p className="shrink-0 text-xs font-semibold uppercase tracking-widest text-gray-400">Coming up</p>
-                <div className="flex-1 border-t border-gray-100" />
+          <div className="px-4 py-3">
+            {todaySessions.length === 0 ? (
+              <div className="flex flex-col items-center py-5 text-center">
+                <p className="text-sm text-gray-400">No sessions scheduled today.</p>
+                <a href="/dashboard/calendar" className="mt-2 text-xs font-medium text-brand-600 hover:underline">Open calendar →</a>
               </div>
-              <ul className="divide-y divide-gray-50">
-                {upcomingSessions.map(s => {
-                  const name = s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Unknown client'
-                  const dateLabel = formatUpcomingDate(s.service_date, tomorrowStr)
-                  const time = s.start_time ? s.start_time.slice(0, 5) : null
+            ) : (
+              <ul className="space-y-1.5">
+                {todaySessions.map(s => {
+                  const name     = s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Unknown client'
+                  const initials = s.clients ? `${s.clients.first_name[0]}${s.clients.last_name[0]}` : '?'
+                  const isNext   = s.id === nextSessionId
+
+                  const borderColor = { scheduled: 'border-l-blue-400', completed: 'border-l-emerald-500', cancelled: 'border-l-red-400' }[s.status] ?? 'border-l-gray-200'
+                  const dotColor    = { scheduled: 'bg-blue-400', completed: 'bg-emerald-500', cancelled: 'bg-red-400' }[s.status] ?? 'bg-gray-300'
+
                   return (
-                    <li key={s.id} className="flex items-center gap-3 py-2.5">
-                      <span className="w-20 shrink-0 text-xs font-medium text-gray-400">{dateLabel}</span>
-                      <div className="min-w-0 flex-1">
-                        <a href={`/dashboard/clients/${s.client_id}`} className="text-sm font-medium text-gray-900 hover:text-brand-600 truncate block">
-                          {name}
-                        </a>
-                        {s.services?.name && (
-                          <p className="text-xs text-gray-400 truncate">{s.services.name}</p>
-                        )}
-                      </div>
-                      {time && <span className="shrink-0 text-xs tabular-nums font-medium text-gray-500">{time}</span>}
+                    <li key={s.id}>
+                      <a
+                        href={`/dashboard/clients/${s.client_id}`}
+                        className={`group flex items-center gap-2.5 rounded-lg border-l-[3px] px-3 py-2 transition-colors ${borderColor} ${isNext ? 'ring-1 ring-brand-200 bg-brand-50/50 hover:bg-brand-50' : 'bg-gray-50 hover:bg-gray-100'}`}
+                      >
+                        {/* Time */}
+                        <div className="w-9 shrink-0 text-right">
+                          {s.start_time ? (
+                            <>
+                              <span className="block text-[11px] font-bold tabular-nums text-gray-700 leading-none">{s.start_time.slice(0, 5)}</span>
+                              {s.end_time && <span className="mt-0.5 block text-[10px] tabular-nums text-gray-400 leading-none">{s.end_time.slice(0, 5)}</span>}
+                            </>
+                          ) : <span className="text-xs text-gray-300">—</span>}
+                        </div>
+                        {/* Avatar */}
+                        <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold uppercase ${isNext ? 'bg-brand-100 text-brand-700' : 'bg-white text-gray-600 shadow-sm'}`}>
+                          {initials}
+                        </div>
+                        {/* Info */}
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-xs font-semibold truncate ${isNext ? 'text-brand-800' : 'text-gray-900'}`}>{name}</p>
+                          {s.services?.name && <p className="text-[10px] text-gray-400 truncate">{s.services.name}</p>}
+                        </div>
+                        {isNext && <span className="shrink-0 rounded-full bg-brand-600 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">Next</span>}
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotColor}`} />
+                      </a>
                     </li>
                   )
                 })}
               </ul>
-            </>
-          )}
+            )}
 
-          {todaySessions.length === 0 && upcomingSessions.length === 0 && (
-            <EmptyState
-              title="No sessions scheduled this week"
-              description="Schedule sessions from the calendar."
-              action={{ label: 'Open calendar', href: '/dashboard/calendar' }}
-            />
-          )}
-        </Card>
+            {/* Coming up */}
+            {upcomingSessions.length > 0 && (
+              <>
+                <div className="my-2.5 flex items-center gap-2">
+                  <p className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-gray-400">Coming up</p>
+                  <div className="flex-1 border-t border-gray-100" />
+                </div>
+                <ul className="space-y-0.5">
+                  {upcomingSessions.slice(0, 5).map(s => {
+                    const name    = s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Unknown client'
+                    const dateLbl = s.service_date === tomorrowStr
+                      ? 'Tomorrow'
+                      : new Date(`${s.service_date}T12:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
+                    return (
+                      <li key={s.id}>
+                        <a href={`/dashboard/clients/${s.client_id}`} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-gray-50 transition-colors -mx-1.5">
+                          <span className="w-16 shrink-0 text-[10px] font-medium text-gray-400">{dateLbl}</span>
+                          <p className="min-w-0 flex-1 text-[11px] font-medium text-gray-700 truncate">{name}</p>
+                          {s.start_time && <span className="shrink-0 text-[10px] tabular-nums text-gray-400">{s.start_time.slice(0, 5)}</span>}
+                        </a>
+                      </li>
+                    )
+                  })}
+                  {upcomingSessions.length > 5 && (
+                    <li className="px-1.5 py-1 text-[10px] text-gray-400">+ {upcomingSessions.length - 5} more this week</li>
+                  )}
+                </ul>
+              </>
+            )}
 
-        {/* Action required */}
-        <Card padding="md">
-          <h2 className="mb-4 font-semibold text-gray-900">Action required</h2>
-          {!hasAttention ? (
-            <div className="flex flex-col items-center py-6 text-center">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-green-50">
-                <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            {todaySessions.length === 0 && upcomingSessions.length === 0 && (
+              <p className="py-1 text-center text-[11px] text-gray-400">No upcoming sessions this week.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Urgent Actions */}
+        <div className="rounded-2xl border border-gray-100 bg-white shadow overflow-hidden">
+          <div className="flex items-center justify-between border-b border-gray-50 px-5 py-3.5">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-50">
+                <svg className="h-3.5 w-3.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
               </div>
-              <p className="mt-3 text-sm font-semibold text-gray-700">All clear</p>
-              <p className="mt-1 text-xs text-gray-400">Your operations are in order.</p>
+              <h2 className="text-sm font-bold text-gray-900">Urgent Actions</h2>
+              {urgentCount > 0 && (
+                <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-bold text-red-600">{urgentCount}</span>
+              )}
             </div>
-          ) : (
-            <ul className="space-y-1">
-              {overdueCount > 0 && (
-                <ActionItem
-                  href="/dashboard/invoices"
-                  dot="bg-red-500"
-                  textColor="text-red-600"
-                  label={`${overdueCount} overdue invoice${overdueCount !== 1 ? 's' : ''}`}
-                  sub="Requires immediate action"
-                />
-              )}
-              {missingNotesCount > 0 && (
-                <ActionItem
-                  href="/dashboard/sessions"
-                  dot="bg-amber-400"
-                  textColor="text-amber-700"
-                  label={`${missingNotesCount} session${missingNotesCount !== 1 ? 's' : ''} missing notes`}
-                  sub="Complete session documentation"
-                />
-              )}
-              {draftCount > 0 && (
-                <ActionItem
-                  href="/dashboard/invoices"
-                  dot="bg-blue-400"
-                  textColor="text-blue-600"
-                  label={`${draftCount} draft invoice${draftCount !== 1 ? 's' : ''} unsent`}
-                  sub="Send to participants or plan managers when ready"
-                />
-              )}
-              {clientsMissingFunding > 0 && (
-                <ActionItem
-                  href="/dashboard/clients"
-                  dot="bg-amber-400"
-                  textColor="text-amber-700"
-                  label={`${clientsMissingFunding} client${clientsMissingFunding !== 1 ? 's' : ''} missing funding setup`}
-                  sub="Funding tracking incomplete"
-                />
-              )}
-              {fundingAlerts.map(p => {
-                const clientName = p.clients
-                  ? `${p.clients.first_name} ${p.clients.last_name}`
-                  : 'Client'
-                const days = daysUntil(p.plan_end_date)
-                const isExpiring = p.plan_end_date <= thirtyOutStr
-                const sub = isExpiring
-                  ? `Expires in ${days} day${days !== 1 ? 's' : ''}`
-                  : `${Math.round(Number(p.utilisation_percentage))}% utilised`
-                return (
-                  <ActionItem
-                    key={p.id}
-                    href={`/dashboard/clients/${p.client_id}`}
-                    dot="bg-amber-400"
-                    textColor="text-amber-700"
-                    label={`${clientName} — ${p.plan_name}`}
-                    sub={sub}
-                  />
-                )
-              })}
-            </ul>
+            <a href="/dashboard/sessions" className="text-[11px] font-semibold text-brand-600 hover:underline">View all tasks</a>
+          </div>
+          <ul className="divide-y divide-gray-50">
+            {actionItems.map(a => {
+              const dotCls = a.count > 0
+                ? { red: 'bg-red-500', amber: 'bg-amber-400', blue: 'bg-blue-400' }[a.color]
+                : 'bg-gray-200'
+              const cntCls = a.count > 0
+                ? { red: 'text-red-600 font-bold', amber: 'text-amber-600 font-bold', blue: 'text-blue-600 font-bold' }[a.color]
+                : 'text-gray-300 font-medium'
+              return (
+                <li key={a.label}>
+                  <a href={a.href} className="flex items-center gap-3 px-5 py-2.5 hover:bg-gray-50 transition-colors group">
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotCls}`} />
+                    <span className="flex-1 text-xs text-gray-700 group-hover:text-gray-900 truncate">{a.label}</span>
+                    <span className={`shrink-0 text-xs tabular-nums ${cntCls}`}>{a.count}</span>
+                  </a>
+                </li>
+              )
+            })}
+          </ul>
+          {urgentCount === 0 && (
+            <div className="border-t border-gray-50 px-5 py-3 text-center">
+              <p className="text-xs font-medium text-emerald-600">All actions clear</p>
+            </div>
           )}
-        </Card>
+        </div>
+
+        {/* Financial Health */}
+        <div className="rounded-2xl border border-gray-100 bg-white shadow overflow-hidden">
+          <div className="flex items-center justify-between border-b border-gray-50 px-5 py-3.5">
+            <div className="flex items-center gap-2">
+              <span className="h-4 w-1 rounded-full bg-emerald-500" />
+              <h2 className="text-xs font-bold uppercase tracking-wide text-gray-700">Financial Health</h2>
+            </div>
+            <a href="/dashboard/invoices" className="text-[11px] font-semibold text-brand-600 hover:underline">Invoices →</a>
+          </div>
+
+          <div className="border-b border-gray-50 bg-gradient-to-br from-emerald-50/60 to-white px-5 py-4">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Revenue this month</p>
+            <p className={`mt-1 text-2xl font-bold tabular-nums ${revenueCents > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
+              {revenueCents > 0 ? fmtShort(revenueCents) : '—'}
+            </p>
+            {totalBilledCents > 0 && (
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-400">{collectionRate}% collected</span>
+                  <span className="text-[10px] text-gray-400">{fmtShort(totalBilledCents)} billed</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                  <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${collectionRate}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <dl className="divide-y divide-gray-50 px-5">
+            <HealthRow label="Outstanding" value={outstandingCents > 0 ? fmtShort(outstandingCents) : 'All clear'} status={outstandingCents > 0 ? 'warn' : 'good'} />
+            <HealthRow label="Overdue" value={overdueCount > 0 ? `${overdueCount} · ${fmtShort(overdueCents)}` : 'None'} status={overdueCount > 0 ? 'bad' : 'good'} />
+            <HealthRow label="Paid today" value={paidTodayCents > 0 ? fmtShort(paidTodayCents) : '—'} status={paidTodayCents > 0 ? 'good' : 'neutral'} />
+          </dl>
+        </div>
+
       </div>
 
-      {/* Secondary grid: outstanding invoices + funding alerts */}
-      <div className="grid gap-5 lg:grid-cols-2">
+      {/* ─── Secondary grid: Operational | Compliance | Funding / Getting Started ─── */}
+      <div className="grid gap-4 lg:grid-cols-3">
 
-        {/* Outstanding invoices */}
-        <Card padding="md">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Outstanding invoices</h2>
-            {outstandingInvoices.length === 0
-              ? <Badge color="green">All paid</Badge>
-              : <a href="/dashboard/invoices" className="text-xs font-medium text-brand-600 hover:underline">View all →</a>
-            }
+        {/* Operational Health */}
+        <div className="rounded-2xl border border-gray-100 bg-white shadow overflow-hidden">
+          <div className="flex items-center justify-between border-b border-gray-50 px-5 py-3.5">
+            <div className="flex items-center gap-2">
+              <span className="h-4 w-1 rounded-full bg-brand-500" />
+              <h2 className="text-xs font-bold uppercase tracking-wide text-gray-700">Operational Health</h2>
+            </div>
+            <a href="/dashboard/sessions" className="text-[11px] font-semibold text-brand-600 hover:underline">Sessions →</a>
           </div>
-          {outstandingInvoices.length === 0 ? (
-            <EmptyState title="No outstanding invoices" description="Create an invoice after your next session." />
-          ) : (
+
+          <div className="border-b border-gray-50 bg-gradient-to-br from-sky-50/50 to-white px-5 py-4">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Completion rate</p>
+            <p className={`mt-1 text-2xl font-bold tabular-nums ${completionRate >= 80 ? 'text-brand-700' : completionRate >= 60 ? 'text-amber-700' : 'text-red-600'}`}>
+              {completedThisMonth + cancelledThisMonth > 0 ? `${completionRate}%` : '—'}
+            </p>
+            {completedThisMonth + cancelledThisMonth > 0 && (
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-400">{completedThisMonth} completed</span>
+                  <span className="text-[10px] text-gray-400">{cancelledThisMonth} cancelled</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                  <div
+                    className={`h-full rounded-full transition-all ${completionRate >= 80 ? 'bg-brand-500' : completionRate >= 60 ? 'bg-amber-400' : 'bg-red-400'}`}
+                    style={{ width: `${completionRate}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <dl className="divide-y divide-gray-50 px-5">
+            <HealthRow label="Completed sessions" value={completedThisMonth > 0 ? `${completedThisMonth} this month` : 'None yet'} status={completedThisMonth > 0 ? 'good' : 'neutral'} />
+            <HealthRow label="Cancelled" value={cancelledThisMonth > 0 ? `${cancelledThisMonth} this month` : 'None'} status={cancelledThisMonth > 0 ? 'warn' : 'good'} />
+            <HealthRow label="Draft invoices" value={draftCount > 0 ? `${draftCount} unsent` : 'All sent'} status={draftCount > 0 ? 'warn' : 'good'} />
+          </dl>
+        </div>
+
+        {/* Compliance Health */}
+        <div className="rounded-2xl border border-gray-100 bg-white shadow overflow-hidden">
+          <div className="flex items-center justify-between border-b border-gray-50 px-5 py-3.5">
+            <div className="flex items-center gap-2">
+              <span className="h-4 w-1 rounded-full bg-violet-500" />
+              <h2 className="text-xs font-bold uppercase tracking-wide text-gray-700">Compliance Health</h2>
+            </div>
+            <a href="/dashboard/reports" className="text-[11px] font-semibold text-brand-600 hover:underline">Reports →</a>
+          </div>
+
+          <div className="border-b border-gray-50 bg-gradient-to-br from-violet-50/50 to-white px-5 py-4">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Open items</p>
+            <p className={`mt-1 text-2xl font-bold tabular-nums ${totalComplianceIssues === 0 ? 'text-emerald-700' : 'text-violet-700'}`}>
+              {totalComplianceIssues === 0 ? 'All clear' : totalComplianceIssues}
+            </p>
+            <p className="mt-0.5 text-[10px] text-gray-400">
+              {totalComplianceIssues === 0 ? 'No compliance issues' : `item${totalComplianceIssues !== 1 ? 's' : ''} need attention`}
+            </p>
+          </div>
+
+          <dl className="divide-y divide-gray-50 px-5">
+            <HealthRow label="Missing notes" value={missingNotesCount > 0 ? `${missingNotesCount} session${missingNotesCount !== 1 ? 's' : ''}` : 'All complete'} status={missingNotesCount > 0 ? 'warn' : 'good'} />
+            <HealthRow label="Uninvoiced sessions" value={uninvoicedCount > 0 ? `${uninvoicedCount} session${uninvoicedCount !== 1 ? 's' : ''}` : 'All invoiced'} status={uninvoicedCount > 0 ? 'warn' : 'good'} />
+            <HealthRow label="Missing payment refs" value={missingPaymentRef > 0 ? `${missingPaymentRef} invoice${missingPaymentRef !== 1 ? 's' : ''}` : 'All complete'} status={missingPaymentRef > 0 ? 'warn' : 'good'} />
+            <HealthRow label="Clients without docs" value={clientsMissingDocs > 0 ? `${clientsMissingDocs} client${clientsMissingDocs !== 1 ? 's' : ''}` : 'All documented'} status={clientsMissingDocs > 0 ? 'warn' : 'good'} />
+          </dl>
+        </div>
+
+        {/* Funding Alerts — or Getting Started if no alerts and onboarding incomplete */}
+        {fundingAlerts.length > 0 ? (
+          <div className="rounded-2xl border border-gray-100 bg-white shadow overflow-hidden">
+            <div className="flex items-center justify-between border-b border-gray-50 px-5 py-3.5">
+              <div className="flex items-center gap-2">
+                <span className="h-4 w-1 rounded-full bg-amber-400" />
+                <h2 className="text-xs font-bold uppercase tracking-wide text-gray-700">Funding Alerts</h2>
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-bold text-amber-700">{fundingAlerts.length}</span>
+              </div>
+              <a href="/dashboard/clients" className="text-[11px] font-semibold text-brand-600 hover:underline">Clients →</a>
+            </div>
             <ul className="divide-y divide-gray-50">
-              {outstandingInvoices.map(inv => {
-                const clientName = inv.clients
-                  ? `${inv.clients.first_name} ${inv.clients.last_name}`
-                  : 'Unknown client'
-                const isOverdue = inv.status === 'overdue'
+              {fundingAlerts.slice(0, 6).map(p => {
+                const days     = daysUntil(p.plan_end_date)
+                const pct      = Math.min(Math.round(Number(p.utilisation_percentage)), 100)
+                const isExpiry = p.plan_end_date <= thirtyOutStr
+                const barColor = pct >= 90 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-brand-500'
+                const pctColor = pct >= 90 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-gray-600'
                 return (
-                  <li key={inv.id}>
-                    <a
-                      href={`/dashboard/invoices/${inv.id}`}
-                      className="flex items-center gap-3 py-2.5 hover:bg-gray-50 -mx-6 px-6 transition-colors"
-                    >
+                  <li key={p.id}>
+                    <a href={`/dashboard/clients/${p.client_id}`} className="flex items-center gap-3 px-5 py-2.5 hover:bg-gray-50 transition-colors">
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-gray-900 truncate">{clientName}</p>
-                        <p className="text-xs text-gray-400">
-                          {inv.invoice_number}
-                          {inv.due_at && ` · Due ${new Date(`${inv.due_at}T12:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`}
-                        </p>
+                        <p className="text-xs font-medium text-gray-900 truncate">{p.plan_name}</p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <div className="h-1.5 w-20 overflow-hidden rounded-full bg-gray-100">
+                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className={`text-[10px] font-semibold tabular-nums ${pctColor}`}>{pct}%</span>
+                        </div>
                       </div>
-                      <Badge color={statusColor(inv.status)}>{inv.status}</Badge>
-                      <span className={`shrink-0 text-sm font-semibold tabular-nums ${isOverdue ? 'text-red-600' : 'text-gray-900'}`}>
-                        {fmtAUD(inv.total_cents)}
-                      </span>
+                      {isExpiry && (
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${days <= 7 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {days <= 0 ? 'Expired' : `${days}d`}
+                        </span>
+                      )}
                     </a>
                   </li>
                 )
               })}
             </ul>
-          )}
-        </Card>
-
-        {/* Funding alerts */}
-        <Card padding="md">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Funding alerts</h2>
-            {activeClients > 0 && clientsMissingFunding === 0 && fundingAlerts.length === 0 && (
-              <Badge color="green">All plans within budget</Badge>
-            )}
           </div>
-          {activeClients === 0 ? (
-            <EmptyState
-              title="No active funding plans"
-              description="Add funding plans via client profiles."
-            />
-          ) : clientsMissingFunding > 0 ? (
-            <div className="space-y-3">
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold text-amber-800">
-                      {clientsMissingFunding} client{clientsMissingFunding !== 1 ? 's' : ''} missing funding setup
-                    </p>
-                    <p className="mt-0.5 text-xs text-amber-600">
-                      {clientsWithFunding} of {activeClients} client{activeClients !== 1 ? 's' : ''} have funding configured.
-                    </p>
-                  </div>
-                  <a href="/dashboard/clients" className="shrink-0 text-xs font-semibold text-amber-700 hover:underline">
-                    Set up →
-                  </a>
-                </div>
-              </div>
-              {fundingAlerts.length > 0 && (
-                <ul className="space-y-2.5">
-                  {fundingAlerts.map(p => (
-                    <FundingPlanRow key={p.id} p={p} thirtyOutStr={thirtyOutStr} />
-                  ))}
-                </ul>
-              )}
+        ) : !checklistDone ? (
+          <div className="rounded-2xl border border-gray-100 bg-white px-5 py-5 shadow">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-xs font-bold uppercase tracking-wide text-gray-700">Getting started</h2>
+              <span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-600">
+                {[activeClients > 0, hasAvailability, hasService, hasSession].filter(Boolean).length} / 4
+              </span>
             </div>
-          ) : fundingAlerts.length > 0 ? (
+            <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+              <div
+                className="h-full rounded-full bg-brand-600 transition-all"
+                style={{ width: `${([activeClients > 0, hasAvailability, hasService, hasSession].filter(Boolean).length / 4) * 100}%` }}
+              />
+            </div>
             <ul className="space-y-2.5">
-              {fundingAlerts.map(p => (
-                <FundingPlanRow key={p.id} p={p} thirtyOutStr={thirtyOutStr} />
+              {[
+                { done: activeClients > 0, label: 'Add your first client',      href: '/dashboard/clients' },
+                { done: hasAvailability,   label: 'Set your availability',       href: '/dashboard/availability' },
+                { done: hasService,        label: 'Configure a service',         href: '/dashboard/services' },
+                { done: hasSession,        label: 'Schedule your first session', href: '/dashboard/calendar' },
+              ].map(item => (
+                <li key={item.label} className="flex items-center gap-3">
+                  <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${item.done ? 'border-emerald-500 bg-emerald-500' : 'border-gray-200'}`}>
+                    {item.done && (
+                      <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </div>
+                  <a
+                    href={item.href}
+                    className={`text-xs transition-colors ${item.done ? 'text-gray-400 line-through pointer-events-none' : 'text-gray-700 hover:text-brand-600 hover:underline'}`}
+                  >
+                    {item.label}
+                  </a>
+                </li>
               ))}
             </ul>
-          ) : (
-            <div className="flex flex-col items-center py-6 text-center">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-green-50">
-                <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <p className="mt-3 text-sm font-semibold text-gray-700">All plans within budget</p>
-              <p className="mt-1 text-xs text-gray-400">
-                {allActivePlans.length} active plan{allActivePlans.length !== 1 ? 's' : ''} tracked.
-              </p>
-            </div>
-          )}
-        </Card>
+          </div>
+        ) : null}
+
       </div>
 
-      {/* Getting started — hidden once all setup steps are done */}
-      {!checklistDone && (
-        <Card padding="md">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Getting started</h2>
-            <span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-600">
-              {[hasClient, hasAvailability, hasService, hasSession].filter(Boolean).length} / 4 complete
-            </span>
-          </div>
-
-          {/* Progress bar */}
-          <div className="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-            <div
-              className="h-full rounded-full bg-brand-600 transition-all"
-              style={{ width: `${([hasClient, hasAvailability, hasService, hasSession].filter(Boolean).length / 4) * 100}%` }}
-            />
-          </div>
-
-          <ul className="space-y-3">
-            {[
-              { done: hasClient,       label: 'Add your first client',      href: '/dashboard/clients' },
-              { done: hasAvailability, label: 'Set your availability',       href: '/dashboard/availability' },
-              { done: hasService,      label: 'Configure a service',         href: '/dashboard/services' },
-              { done: hasSession,      label: 'Schedule your first session', href: '/dashboard/calendar' },
-            ].map(item => (
-              <li key={item.label} className="flex items-center gap-3">
-                <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${item.done ? 'border-green-500 bg-green-500' : 'border-gray-300'}`}>
-                  {item.done && (
-                    <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                    </svg>
-                  )}
-                </div>
-                <a
-                  href={item.href}
-                  className={`text-sm transition-colors ${item.done ? 'text-gray-400 line-through pointer-events-none' : 'text-gray-700 hover:text-brand-600 hover:underline'}`}
-                >
-                  {item.label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Shared sub-component for funding plan rows (deduplicates two identical blocks)
+// AlertCard
 // ---------------------------------------------------------------------------
 
-function FundingPlanRow({
-  p,
-  thirtyOutStr,
+function AlertCard({
+  icon, iconBg, iconColor, count, label, sub, subColor, href, active, activeBorder,
 }: {
-  p: {
-    id: string; plan_name: string; plan_end_date: string
-    remaining_amount: number; utilisation_percentage: number
-    client_id: string
-    clients: { id: string; first_name: string; last_name: string } | null
-  }
-  thirtyOutStr: string
+  icon: ReactNode; iconBg: string; iconColor: string
+  count: number; label: string; sub: string; subColor: string
+  href?: string; active: boolean; activeBorder: string
 }) {
-  const clientName = p.clients
-    ? `${p.clients.first_name} ${p.clients.last_name}`
-    : 'Unknown client'
-  const pct = Math.min(Math.round(Number(p.utilisation_percentage)), 100)
-  const days = daysUntil(p.plan_end_date)
-  const isExpiring = p.plan_end_date <= thirtyOutStr
-  const barColor = pct >= 90 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-green-500'
-  const pctColor  = pct >= 90 ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-gray-600'
-  return (
-    <li>
-      <a
-        href={`/dashboard/clients/${p.client_id}`}
-        className="group block rounded-xl border border-gray-100 p-3 hover:border-brand-200 hover:bg-gray-50 transition-all"
-      >
-        <div className="mb-2 flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate group-hover:text-brand-600">
-              {clientName}
-            </p>
-            <p className="text-xs text-gray-400 truncate">{p.plan_name}</p>
-          </div>
-          <div className="flex shrink-0 flex-col items-end gap-1">
-            {isExpiring && (
-              <Badge color={days <= 7 ? 'red' : 'amber'}>
-                {days <= 0 ? 'Expired' : `${days}d left`}
-              </Badge>
-            )}
-            <span className={`text-xs font-semibold tabular-nums ${pctColor}`}>
-              {pct}%
-            </span>
-          </div>
+  const inner = (
+    <div className={`rounded-xl border bg-white p-4 shadow-sm transition-shadow hover:shadow ${active ? activeBorder : 'border-gray-100'}`}>
+      <div className="flex items-start gap-3">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${iconBg}`}>
+          <span className={iconColor}>{icon}</span>
         </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-          <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+        <div className="min-w-0">
+          <p className={`text-2xl font-bold tabular-nums leading-none ${active ? 'text-gray-900' : 'text-gray-400'}`}>{count}</p>
+          <p className="mt-0.5 text-xs font-medium text-gray-600 truncate">{label}</p>
+          <p className={`mt-0.5 text-[11px] font-medium ${subColor}`}>{sub}</p>
         </div>
-        <p className="mt-1.5 text-xs text-gray-400">
-          {fmtAUD(p.remaining_amount)} remaining · expires{' '}
-          {new Date(`${p.plan_end_date}T12:00:00`).toLocaleDateString('en-AU', {
-            day: 'numeric', month: 'short', year: 'numeric',
-          })}
-        </p>
-      </a>
-    </li>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Local helper components
-// ---------------------------------------------------------------------------
-
-function StatCard({ icon, bg, label, value, valueColor, sub }: {
-  icon: ReactNode; bg: string; label: string; value: string; valueColor: string; sub: ReactNode
-}) {
-  return (
-    <Card padding="md" className="flex items-start gap-3">
-      <div className={`rounded-xl p-2.5 ${bg} shrink-0`}>{icon}</div>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-gray-500">{label}</p>
-        <p className={`mt-0.5 text-2xl font-bold tracking-tight sm:text-3xl ${valueColor}`}>{value}</p>
-        <div className="mt-0.5 text-xs text-gray-400 truncate">{sub}</div>
       </div>
-    </Card>
+    </div>
   )
+  return href ? <a href={href}>{inner}</a> : inner
 }
 
-function ActionItem({ href, dot, textColor, label, sub }: {
-  href: string; dot: string; textColor: string; label: string; sub: string
-}) {
-  return (
-    <li>
-      <a href={href} className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-gray-50 -mx-2.5 transition-colors">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
-        <div className="min-w-0 flex-1">
-          <p className={`text-sm font-medium truncate ${textColor}`}>{label}</p>
-          <p className="text-xs text-gray-400">{sub}</p>
-        </div>
-        <svg className="ml-auto h-3.5 w-3.5 shrink-0 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-      </a>
-    </li>
-  )
-}
+// ---------------------------------------------------------------------------
+// HealthRow
+// ---------------------------------------------------------------------------
 
-function EmptyState({ title, description, action }: {
-  title: string; description: string; action?: { label: string; href: string }
-}) {
+function HealthRow({ label, value, status }: { label: string; value: string; status: 'good' | 'warn' | 'bad' | 'neutral' }) {
+  const dot = { good: 'bg-emerald-400', warn: 'bg-amber-400', bad: 'bg-red-500', neutral: 'bg-gray-300' }[status]
+  const val = { good: 'text-emerald-700', warn: 'text-amber-700', bad: 'text-red-600', neutral: 'text-gray-400' }[status]
   return (
-    <div className="flex flex-col items-center py-8 text-center">
-      <p className="text-sm font-medium text-gray-700">{title}</p>
-      <p className="mt-1 text-xs text-gray-400">{description}</p>
-      {action && (
-        <a href={action.href} className="mt-4 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-          {action.label}
-        </a>
-      )}
+    <div className="flex items-center gap-2 py-2">
+      <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+      <dt className="min-w-0 flex-1 text-xs text-gray-400 truncate">{label}</dt>
+      <dd className={`shrink-0 text-xs font-semibold tabular-nums ${val}`}>{value}</dd>
     </div>
   )
 }
 
-function CalIcon() {
+// ---------------------------------------------------------------------------
+// Icons
+// ---------------------------------------------------------------------------
+
+function WarningIcon() {
   return (
-    <svg className="h-5 w-5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
     </svg>
   )
 }
 
-function PeopleIcon() {
+function ClipboardIcon() {
   return (
-    <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-        d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+    <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
     </svg>
   )
 }
 
-function InvIcon() {
+function InboxIcon() {
   return (
-    <svg className="h-5 w-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
     </svg>
   )
 }
 
-function RevIcon() {
+function ClockIcon() {
   return (
-    <svg className="h-5 w-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-        d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   )
 }

@@ -403,3 +403,304 @@ export async function getReportData(
     },
   }
 }
+
+// ---------------------------------------------------------------------------
+// Command Centre — full data for the upgraded Reports page
+// ---------------------------------------------------------------------------
+
+export type AgeBuckets = {
+  d0_7: number
+  d8_14: number
+  d15_30: number
+  d30plus: number
+}
+
+export type CommandCentreData = {
+  period: { from: string; to: string; label: string }
+  kpis: {
+    revenueReceivedCents: number
+    outstandingCents: number
+    overdueCount: number
+    overdueCents: number
+    sessionsCompleted: number
+    completionRate: number
+    uninvoicedCompleted: number
+  }
+  finance: {
+    paidTotalCents: number
+    outstandingCents: number
+    overdueCents: number
+    sentCents: number
+    remittancePendingCount: number
+    remittancePendingCents: number
+    ageing: AgeBuckets
+    ageingCents: AgeBuckets
+    revenueByClient: { name: string; cents: number }[]
+  }
+  operations: {
+    scheduled: number
+    completed: number
+    cancelled: number
+    hoursDelivered: number
+    completionRate: number
+    byService: { name: string; total: number; completed: number; hours: number }[]
+  }
+  compliance: {
+    missingNotes: number
+    uninvoiced: number
+    missingPaymentRef: number
+    clientsMissingDocs: number
+    overdueList: { invoiceNumber: string; clientName: string; daysOverdue: number; cents: number }[]
+    remittancePendingList: { invoiceNumber: string; clientName: string; cents: number; paidAt: string }[]
+  }
+}
+
+export async function getCommandCentreData(
+  practitionerId: string,
+  period: Period,
+): Promise<CommandCentreData> {
+  const { from, to, label } = getPeriodDates(period)
+  const supabase = await createServerSupabaseClient()
+
+  const today = new Date()
+  today.setUTCHours(0, 0, 0, 0)
+  const todayStr = today.toISOString().slice(0, 10)
+
+  const fromDate = new Date(from + 'T00:00:00Z')
+  const toDate   = new Date(to   + 'T23:59:59Z')
+
+  const [sessRes, invRes, uninvoicedRes, missingNotesRes, clientsRes, docClientIdsRes] =
+    await Promise.all([
+      supabase
+        .from('sessions')
+        .select('status, duration_minutes, rate, invoice_id, notes, services(name)')
+        .eq('practitioner_id', practitionerId)
+        .gte('service_date', from)
+        .lte('service_date', to),
+
+      supabase
+        .from('invoices')
+        .select('id, invoice_number, status, total_cents, paid_at, due_at, remittance_received_at, payment_reference, client_id, clients(first_name, last_name)')
+        .eq('practitioner_id', practitionerId),
+
+      supabase
+        .from('sessions')
+        .select('id', { count: 'exact', head: true })
+        .eq('practitioner_id', practitionerId)
+        .eq('status', 'completed')
+        .is('invoice_id', null),
+
+      supabase
+        .from('sessions')
+        .select('id', { count: 'exact', head: true })
+        .eq('practitioner_id', practitionerId)
+        .eq('status', 'completed')
+        .is('notes', null),
+
+      supabase
+        .from('clients')
+        .select('id')
+        .eq('practitioner_id', practitionerId),
+
+      supabase
+        .from('client_documents')
+        .select('client_id')
+        .eq('practitioner_id', practitionerId),
+    ])
+
+  type SRow = {
+    status: string
+    duration_minutes: number
+    rate: number
+    invoice_id: string | null
+    notes: string | null
+    services: { name: string } | null
+  }
+  type IRow = {
+    id: string
+    invoice_number: string
+    status: string
+    total_cents: number
+    paid_at: string | null
+    due_at: string | null
+    remittance_received_at: string | null
+    payment_reference: string | null
+    client_id: string
+    clients: { first_name: string; last_name: string } | null
+  }
+
+  const sessions  = (sessRes.data ?? []) as unknown as SRow[]
+  const invoices  = (invRes.data  ?? []) as unknown as IRow[]
+  const uninvoicedCompleted = uninvoicedRes.count ?? 0
+  const missingNotes        = missingNotesRes.count ?? 0
+
+  // Clients missing documents
+  const docClientIds = new Set((docClientIdsRes.data ?? []).map((r: { client_id: string }) => r.client_id))
+  const clientsMissingDocs = (clientsRes.data ?? []).filter(
+    (c: { id: string }) => !docClientIds.has(c.id),
+  ).length
+
+  const inPeriod = (ts: string | null): boolean => {
+    if (!ts) return false
+    const d = new Date(ts)
+    return d >= fromDate && d <= toDate
+  }
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+
+  const revenueReceivedCents = invoices
+    .filter(inv => inv.status === 'paid' && inPeriod(inv.paid_at))
+    .reduce((s, inv) => s + inv.total_cents, 0)
+
+  const outstandingInvoices = invoices.filter(inv => ['sent', 'overdue'].includes(inv.status))
+  const outstandingCents = outstandingInvoices.reduce((s, inv) => s + inv.total_cents, 0)
+
+  const overdueInvoices = invoices.filter(inv => inv.status === 'overdue')
+  const overdueCount    = overdueInvoices.length
+  const overdueCents    = overdueInvoices.reduce((s, inv) => s + inv.total_cents, 0)
+
+  const sessCompleted  = sessions.filter(s => s.status === 'completed').length
+  const sessCancelled  = sessions.filter(s => s.status === 'cancelled').length
+  const completionRate = sessCompleted + sessCancelled > 0
+    ? Math.round((sessCompleted / (sessCompleted + sessCancelled)) * 100)
+    : 0
+
+  // ── Finance ───────────────────────────────────────────────────────────────
+
+  const paidTotalCents = invoices
+    .filter(inv => inv.status === 'paid')
+    .reduce((s, inv) => s + inv.total_cents, 0)
+  const sentCents = invoices
+    .filter(inv => inv.status === 'sent')
+    .reduce((s, inv) => s + inv.total_cents, 0)
+
+  const remittancePending = invoices.filter(
+    inv => inv.status === 'paid' && !inv.remittance_received_at,
+  )
+  const remittancePendingCount = remittancePending.length
+  const remittancePendingCents = remittancePending.reduce((s, inv) => s + inv.total_cents, 0)
+
+  const ageingInvoices = invoices.filter(
+    inv => ['overdue', 'sent'].includes(inv.status) && inv.due_at && inv.due_at < todayStr,
+  )
+  const ageing: AgeBuckets      = { d0_7: 0, d8_14: 0, d15_30: 0, d30plus: 0 }
+  const ageingCents: AgeBuckets = { d0_7: 0, d8_14: 0, d15_30: 0, d30plus: 0 }
+  for (const inv of ageingInvoices) {
+    const days   = Math.round((today.getTime() - new Date(inv.due_at! + 'T00:00:00').getTime()) / 86_400_000)
+    const bucket: keyof AgeBuckets =
+      days <= 7  ? 'd0_7'   :
+      days <= 14 ? 'd8_14'  :
+      days <= 30 ? 'd15_30' : 'd30plus'
+    ageing[bucket]++
+    ageingCents[bucket] += inv.total_cents
+  }
+
+  const clientRevMap: Record<string, { name: string; cents: number }> = {}
+  for (const inv of invoices.filter(inv => inv.status === 'paid')) {
+    const name = inv.clients
+      ? `${inv.clients.first_name} ${inv.clients.last_name}`
+      : 'Unknown'
+    if (!clientRevMap[inv.client_id]) clientRevMap[inv.client_id] = { name, cents: 0 }
+    clientRevMap[inv.client_id].cents += inv.total_cents
+  }
+  const revenueByClient = Object.values(clientRevMap)
+    .sort((a, b) => b.cents - a.cents)
+    .slice(0, 10)
+
+  // ── Operations ────────────────────────────────────────────────────────────
+
+  const sessScheduled   = sessions.filter(s => s.status === 'scheduled').length
+  const hoursDelivered  = parseFloat(
+    (sessions.filter(s => s.status === 'completed')
+      .reduce((s, sess) => s + sess.duration_minutes, 0) / 60).toFixed(1),
+  )
+
+  const serviceMap: Record<string, { name: string; total: number; completed: number; mins: number }> = {}
+  for (const s of sessions) {
+    const name = (s.services as { name: string } | null)?.name ?? 'Unspecified service'
+    if (!serviceMap[name]) serviceMap[name] = { name, total: 0, completed: 0, mins: 0 }
+    serviceMap[name].total++
+    if (s.status === 'completed') {
+      serviceMap[name].completed++
+      serviceMap[name].mins += s.duration_minutes
+    }
+  }
+  const byService = Object.values(serviceMap)
+    .sort((a, b) => b.total - a.total)
+    .map(s => ({
+      name: s.name,
+      total: s.total,
+      completed: s.completed,
+      hours: parseFloat((s.mins / 60).toFixed(1)),
+    }))
+
+  // ── Compliance ────────────────────────────────────────────────────────────
+
+  const missingPaymentRef = invoices.filter(
+    inv => inv.status === 'paid' && !inv.payment_reference,
+  ).length
+
+  const overdueList = overdueInvoices
+    .map(inv => ({
+      invoiceNumber: inv.invoice_number,
+      clientName: inv.clients
+        ? `${inv.clients.first_name} ${inv.clients.last_name}`
+        : 'Unknown',
+      daysOverdue: inv.due_at
+        ? Math.max(0, Math.round(
+            (today.getTime() - new Date(inv.due_at + 'T00:00:00').getTime()) / 86_400_000,
+          ))
+        : 0,
+      cents: inv.total_cents,
+    }))
+    .sort((a, b) => b.daysOverdue - a.daysOverdue)
+
+  const remittancePendingList = remittancePending.slice(0, 12).map(inv => ({
+    invoiceNumber: inv.invoice_number,
+    clientName: inv.clients
+      ? `${inv.clients.first_name} ${inv.clients.last_name}`
+      : 'Unknown',
+    cents: inv.total_cents,
+    paidAt: inv.paid_at ?? '',
+  }))
+
+  return {
+    period: { from, to, label },
+    kpis: {
+      revenueReceivedCents,
+      outstandingCents,
+      overdueCount,
+      overdueCents,
+      sessionsCompleted: sessCompleted,
+      completionRate,
+      uninvoicedCompleted,
+    },
+    finance: {
+      paidTotalCents,
+      outstandingCents,
+      overdueCents,
+      sentCents,
+      remittancePendingCount,
+      remittancePendingCents,
+      ageing,
+      ageingCents,
+      revenueByClient,
+    },
+    operations: {
+      scheduled: sessScheduled,
+      completed: sessCompleted,
+      cancelled: sessCancelled,
+      hoursDelivered,
+      completionRate,
+      byService,
+    },
+    compliance: {
+      missingNotes,
+      uninvoiced: uninvoicedCompleted,
+      missingPaymentRef,
+      clientsMissingDocs,
+      overdueList,
+      remittancePendingList,
+    },
+  }
+}
