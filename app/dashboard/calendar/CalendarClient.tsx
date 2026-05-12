@@ -45,7 +45,9 @@ function padTwo(n: number): string {
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
 
-/** Convert hex like "#6366f1" to "r g b" for rgba() */
+const FALLBACK_COLOR = '#6366f1'
+
+/** Convert hex like "#6366f1" to "r g b" for CSS rgba(). */
 function hexToRgb(hex: string): string {
   const h = hex.replace('#', '')
   if (h.length !== 6) return '99 102 241'
@@ -55,10 +57,23 @@ function hexToRgb(hex: string): string {
   return `${r} ${g} ${b}`
 }
 
-const STATUS_CLASSES: Record<string, string> = {
-  scheduled: 'bg-blue-100 border-blue-300 text-blue-800',
-  completed: 'bg-green-100 border-green-300 text-green-800',
-  cancelled: 'bg-gray-100 border-gray-300 text-gray-400 line-through',
+/**
+ * Returns a readable text colour for content rendered on a light tinted
+ * background (≈15% opacity) of the same hue. Dark colours are used as-is;
+ * light colours are darkened so they stay legible on pale backgrounds.
+ */
+function textColor(hex: string): string {
+  const h = hex.replace('#', '')
+  if (h.length !== 6) return '#4338ca'
+  const r = parseInt(h.slice(0, 2), 16) / 255
+  const g = parseInt(h.slice(2, 4), 16) / 255
+  const b = parseInt(h.slice(4, 6), 16) / 255
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b
+  if (luminance < 0.4) return hex
+  const dr = Math.round(r * 255 * 0.55).toString(16).padStart(2, '0')
+  const dg = Math.round(g * 255 * 0.55).toString(16).padStart(2, '0')
+  const db = Math.round(b * 255 * 0.55).toString(16).padStart(2, '0')
+  return `#${dr}${dg}${db}`
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -263,20 +278,26 @@ export default function CalendarClient({
                     <div className="mt-1 space-y-0.5 px-1">
                       {unscheduled.map(s => {
                         const pract = practitionerMap.get(s.practitioner_id)
-                        const color = pract?.calendar_color || '#6366f1'
+                        const color = pract?.calendar_color || FALLBACK_COLOR
+                        const isCancelled = s.status === 'cancelled'
                         const canEdit = isAdmin || s.practitioner_id === currentPractitionerId
+                        const txt = textColor(color)
                         return (
                           <div
                             key={s.id}
                             onClick={canEdit ? (e) => openSession(s, e) : undefined}
                             title={s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Session'}
-                            style={isTeam ? { backgroundColor: `rgba(${hexToRgb(color)}/0.15)`, borderColor: color } : {}}
+                            style={{
+                              backgroundColor: `rgba(${hexToRgb(color)}/0.15)`,
+                              borderColor: `rgba(${hexToRgb(color)}/0.5)`,
+                              color: txt,
+                            }}
                             className={`truncate rounded border px-1 py-0.5 text-xs
                               ${canEdit ? 'cursor-pointer' : 'cursor-default'}
-                              ${isTeam ? '' : (STATUS_CLASSES[s.status] ?? 'bg-gray-100 border-gray-300')}`}
+                              ${isCancelled ? 'opacity-50 line-through' : ''}`}
                           >
                             {isTeam && pract && (
-                              <span className="font-semibold" style={{ color }}>
+                              <span className="font-semibold opacity-70">
                                 {pract.first_name.charAt(0)}.{' '}
                               </span>
                             )}
@@ -346,7 +367,7 @@ export default function CalendarClient({
                     const heightPx = Math.max((clampedEnd - clampedStart) * (HOUR_PX / 60), 16)
 
                     const pract = practitionerMap.get(b.practitioner_id)
-                    const color = pract?.calendar_color || '#9ca3af'
+                    const color = pract?.calendar_color || FALLBACK_COLOR
 
                     return (
                       <div
@@ -369,7 +390,7 @@ export default function CalendarClient({
                         className="absolute z-5 overflow-hidden px-1.5 py-0.5 pointer-events-none"
                       >
                         {heightPx >= 20 && (
-                          <p className="truncate text-[10px] font-medium leading-tight" style={{ color }}>
+                          <p className="truncate text-[10px] font-medium leading-tight" style={{ color: textColor(color) }}>
                             {b.reason || 'Blocked'}
                             {isTeam && pract ? ` · ${pract.first_name}` : ''}
                           </p>
@@ -388,59 +409,40 @@ export default function CalendarClient({
                       ? `${s.clients.first_name} ${s.clients.last_name}`
                       : 'Session'
                     const pract = practitionerMap.get(s.practitioner_id)
-                    const color = pract?.calendar_color || '#6366f1'
+                    const color = pract?.calendar_color || FALLBACK_COLOR
 
-                    if (isTeam) {
-                      // Team view: colour by practitioner, indicate status via opacity
-                      const isCompleted = s.status === 'completed'
-                      const isCancelled = s.status === 'cancelled'
-                      const canEdit = isAdmin || s.practitioner_id === currentPractitionerId
-                      return (
-                        <div
-                          key={s.id}
-                          onClick={canEdit ? (e) => openSession(s, e) : undefined}
-                          style={{
-                            top: topPx,
-                            height: heightPx,
-                            left: 2,
-                            right: 2,
-                            backgroundColor: `rgba(${hexToRgb(color)}/${isCancelled ? '0.15' : isCompleted ? '0.25' : '0.2'})`,
-                            borderColor: `rgba(${hexToRgb(color)}/${isCancelled ? '0.3' : '0.6'})`,
-                            borderLeftColor: color,
-                            borderLeftWidth: 3,
-                          }}
-                          className={`absolute z-10 overflow-hidden rounded border px-1.5 py-0.5 text-xs
-                            ${canEdit ? 'cursor-pointer hover:brightness-95' : 'cursor-default'}
-                            ${isCancelled ? 'line-through opacity-50' : ''}`}
-                        >
-                          <div className="truncate font-medium leading-tight" style={{ color: isCancelled ? '#9ca3af' : color }}>
-                            {pract && (
-                              <span className="opacity-70">{pract.first_name.charAt(0)}. </span>
-                            )}
-                            {clientName}
-                          </div>
-                          {heightPx >= 36 && (
-                            <div className="truncate leading-tight opacity-60" style={{ color }}>
-                              {s.start_time!.slice(0, 5)}
-                              {s.ndis_line_item ? ` · ${s.ndis_line_item}` : ''}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    }
+                    const isCompleted = s.status === 'completed'
+                    const isCancelled = s.status === 'cancelled'
+                    const canEdit = isAdmin || s.practitioner_id === currentPractitionerId
+                    const txt = textColor(color)
 
-                    // Solo view: existing status-based colours
                     return (
                       <div
                         key={s.id}
-                        onClick={(e) => openSession(s, e)}
-                        style={{ top: topPx, height: heightPx, left: 2, right: 2 }}
-                        className={`absolute z-10 cursor-pointer overflow-hidden rounded border px-1.5 py-0.5 text-xs
-                          hover:brightness-95 ${STATUS_CLASSES[s.status] ?? 'bg-gray-100 border-gray-300'}`}
+                        onClick={canEdit ? (e) => openSession(s, e) : undefined}
+                        style={{
+                          top: topPx,
+                          height: heightPx,
+                          left: 2,
+                          right: 2,
+                          backgroundColor: `rgba(${hexToRgb(color)}/${isCancelled ? '0.1' : isCompleted ? '0.22' : '0.15'})`,
+                          borderColor: `rgba(${hexToRgb(color)}/0.5)`,
+                          borderLeftColor: color,
+                          borderLeftWidth: 3,
+                          color: txt,
+                        }}
+                        className={`absolute z-10 overflow-hidden rounded border px-1.5 py-0.5 text-xs
+                          ${canEdit ? 'cursor-pointer hover:brightness-95' : 'cursor-default'}
+                          ${isCancelled ? 'opacity-50' : ''}`}
                       >
-                        <div className="truncate font-medium leading-tight">{clientName}</div>
+                        <div className={`truncate font-medium leading-tight ${isCancelled ? 'line-through' : ''}`}>
+                          {isTeam && pract && (
+                            <span className="opacity-70">{pract.first_name.charAt(0)}. </span>
+                          )}
+                          {clientName}
+                        </div>
                         {heightPx >= 36 && (
-                          <div className="truncate leading-tight opacity-70">
+                          <div className="truncate leading-tight opacity-60">
                             {s.start_time!.slice(0, 5)}
                             {s.ndis_line_item ? ` · ${s.ndis_line_item}` : ''}
                           </div>
@@ -461,7 +463,7 @@ export default function CalendarClient({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
           <span className="font-medium text-gray-600">Legend:</span>
           {practitioners.map((p) => {
-            const color = p.calendar_color || '#6366f1'
+            const color = p.calendar_color || FALLBACK_COLOR
             return (
               <span key={p.id} className="flex items-center gap-1">
                 <span
