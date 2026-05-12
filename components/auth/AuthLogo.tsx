@@ -1,3 +1,5 @@
+'use client'
+
 export default function AuthLogo() {
   return (
     <div className="flex justify-center mb-6">

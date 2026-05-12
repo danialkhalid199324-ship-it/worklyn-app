@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Button from '@/components/ui/Button'
-import type { ClientRow, ServiceRow, NdisPriceGuideRow } from '@/types/database'
+import type { ClientRow, ServiceRow, NdisPriceGuideRow, PractitionerRow, BlockedTimeRow } from '@/types/database'
 import type { SessionWithClient } from '@/lib/db'
 import SessionModal from '../sessions/SessionModal'
 
@@ -14,21 +14,13 @@ const TOTAL_PX = (HOUR_END - HOUR_START) * HOUR_PX
 const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => i + HOUR_START)
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-const STATUS_CLASSES: Record<string, string> = {
-  scheduled: 'bg-blue-100 border-blue-300 text-blue-800',
-  completed: 'bg-green-100 border-green-300 text-green-800',
-  cancelled: 'bg-gray-100 border-gray-300 text-gray-400 line-through',
-}
-
 // ── Date helpers ─────────────────────────────────────────────────────────────
-// All arithmetic uses Date.UTC so toISOString() is never shifted by local TZ.
 
 function addDays(dateStr: string, n: number): string {
   const [y, m, d] = dateStr.split('-').map(Number)
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
 }
 
-/** Today's date in the browser's local timezone as YYYY-MM-DD */
 function localToday(): string {
   const d = new Date()
   return [
@@ -51,41 +43,94 @@ function padTwo(n: number): string {
   return String(n).padStart(2, '0')
 }
 
+// ── Colour helpers ────────────────────────────────────────────────────────────
+
+/** Convert hex like "#6366f1" to "r g b" for rgba() */
+function hexToRgb(hex: string): string {
+  const h = hex.replace('#', '')
+  if (h.length !== 6) return '99 102 241'
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  return `${r} ${g} ${b}`
+}
+
+const STATUS_CLASSES: Record<string, string> = {
+  scheduled: 'bg-blue-100 border-blue-300 text-blue-800',
+  completed: 'bg-green-100 border-green-300 text-green-800',
+  cancelled: 'bg-gray-100 border-gray-300 text-gray-400 line-through',
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props {
   sessions: SessionWithClient[]
+  blockedTimes: BlockedTimeRow[]
   clients: ClientRow[]
   services: ServiceRow[]
   priceGuide: NdisPriceGuideRow[]
-  weekStart: string // YYYY-MM-DD — always a Monday, always treated as a plain date
+  practitioners: PractitionerRow[]
+  currentPractitionerId: string
+  isAdmin: boolean
+  weekStart: string
 }
 
-export default function CalendarClient({ sessions, clients, services, priceGuide, weekStart }: Props) {
+export default function CalendarClient({
+  sessions,
+  blockedTimes,
+  clients,
+  services,
+  priceGuide,
+  practitioners,
+  currentPractitionerId,
+  isAdmin,
+  weekStart,
+}: Props) {
   const router = useRouter()
   const [showModal, setShowModal] = useState(false)
   const [editSession, setEditSession] = useState<SessionWithClient | null>(null)
   const [slotDate, setSlotDate] = useState<string | undefined>()
   const [slotTime, setSlotTime] = useState<string | undefined>()
+  const [filterPractitionerId, setFilterPractitionerId] = useState<string>(
+    isAdmin ? 'all' : currentPractitionerId,
+  )
 
-  // todayStr is the user's LOCAL date so the "today" highlight is correct.
   const todayStr = localToday()
+  const isTeam = practitioners.length > 1
 
-  // Build one entry per day without any Date-to-local-timezone conversion.
+  // Practitioner lookup map for colours and names
+  const practitionerMap = new Map(practitioners.map((p) => [p.id, p]))
+
   const days = DAY_LABELS.map((label, i) => {
     const dateStr = addDays(weekStart, i)
     return { label, dateStr, dayNum: dayNum(dateStr), isToday: dateStr === todayStr }
   })
 
-  // Index sessions by their service_date (plain YYYY-MM-DD string from DB).
+  // Filter sessions and blocked times by selected practitioner
+  const visibleSessions = filterPractitionerId === 'all'
+    ? sessions
+    : sessions.filter((s) => s.practitioner_id === filterPractitionerId)
+
+  const visibleBlocked = filterPractitionerId === 'all'
+    ? blockedTimes
+    : blockedTimes.filter((b) => b.practitioner_id === filterPractitionerId)
+
+  // Index by date
   const sessionsByDate = new Map<string, SessionWithClient[]>()
-  for (const s of sessions) {
+  for (const s of visibleSessions) {
     const arr = sessionsByDate.get(s.service_date) ?? []
     arr.push(s)
     sessionsByDate.set(s.service_date, arr)
   }
 
-  // Navigation: keep all arithmetic in string-space.
+  const blockedByDate = new Map<string, BlockedTimeRow[]>()
+  for (const b of visibleBlocked) {
+    const date = b.start_time.slice(0, 10)
+    const arr = blockedByDate.get(date) ?? []
+    arr.push(b)
+    blockedByDate.set(date, arr)
+  }
+
   function navigate(offset: number) {
     router.push(`/dashboard/calendar?week=${addDays(weekStart, offset * 7)}`)
   }
@@ -98,6 +143,7 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
   }
 
   function openSession(s: SessionWithClient, e: React.MouseEvent) {
+    if (!isAdmin && s.practitioner_id !== currentPractitionerId) return
     e.stopPropagation()
     setEditSession(s)
     setSlotDate(undefined)
@@ -122,6 +168,12 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
   const [wy, wm] = weekStart.split('-').map(Number)
   const monthLabel = new Date(Date.UTC(wy, wm - 1, 1))
     .toLocaleDateString('en-AU', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+
+  // Default practitioner for new sessions.
+  // Admin: follow the filter selection. Non-admin: always book for themselves.
+  const defaultPractitionerId = isAdmin && filterPractitionerId !== 'all'
+    ? filterPractitionerId
+    : currentPractitionerId
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -161,6 +213,28 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
         </div>
       </div>
 
+      {/* ── Practitioner filter (admin / team view only) ── */}
+      {isTeam && (
+        <div className="flex items-center gap-2">
+          <label htmlFor="practitioner-filter" className="text-xs font-medium text-gray-500">
+            View:
+          </label>
+          <select
+            id="practitioner-filter"
+            value={filterPractitionerId}
+            onChange={(e) => setFilterPractitionerId(e.target.value)}
+            className="rounded-lg border border-gray-200 bg-white py-1.5 pl-3 pr-8 text-sm text-gray-700 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          >
+            <option value="all">All practitioners</option>
+            {practitioners.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.first_name} {p.last_name}{p.id === currentPractitionerId ? ' (you)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* ── Week grid ── */}
       <div className="flex-1 overflow-auto rounded-xl border border-gray-200 bg-white">
         <div className="min-w-[700px]">
@@ -171,7 +245,7 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
             style={{ gridTemplateColumns: '56px repeat(7, 1fr)' }}
           >
             <div />
-            {days.map(({ label, dateStr, dayNum, isToday }) => {
+            {days.map(({ label, dateStr, dayNum: dn, isToday }) => {
               const unscheduled = (sessionsByDate.get(dateStr) ?? []).filter(s => !s.start_time)
               return (
                 <div key={dateStr} className="border-l border-gray-100 py-2 text-center">
@@ -182,24 +256,36 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
                     className={`mx-auto mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold
                       ${isToday ? 'bg-indigo-600 text-white' : 'text-gray-800'}`}
                   >
-                    {dayNum}
+                    {dn}
                   </div>
-                  {/* Unscheduled sessions — no start_time, show as badges */}
+                  {/* Unscheduled sessions */}
                   {unscheduled.length > 0 && (
                     <div className="mt-1 space-y-0.5 px-1">
-                      {unscheduled.map(s => (
-                        <div
-                          key={s.id}
-                          onClick={(e) => openSession(s, e)}
-                          title={s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Session'}
-                          className={`cursor-pointer truncate rounded border px-1 py-0.5 text-xs
-                            ${STATUS_CLASSES[s.status] ?? 'bg-gray-100 border-gray-300'}`}
-                        >
-                          {s.clients
-                            ? `${s.clients.first_name} ${s.clients.last_name.charAt(0)}.`
-                            : 'Session'}
-                        </div>
-                      ))}
+                      {unscheduled.map(s => {
+                        const pract = practitionerMap.get(s.practitioner_id)
+                        const color = pract?.calendar_color || '#6366f1'
+                        const canEdit = isAdmin || s.practitioner_id === currentPractitionerId
+                        return (
+                          <div
+                            key={s.id}
+                            onClick={canEdit ? (e) => openSession(s, e) : undefined}
+                            title={s.clients ? `${s.clients.first_name} ${s.clients.last_name}` : 'Session'}
+                            style={isTeam ? { backgroundColor: `rgba(${hexToRgb(color)}/0.15)`, borderColor: color } : {}}
+                            className={`truncate rounded border px-1 py-0.5 text-xs
+                              ${canEdit ? 'cursor-pointer' : 'cursor-default'}
+                              ${isTeam ? '' : (STATUS_CLASSES[s.status] ?? 'bg-gray-100 border-gray-300')}`}
+                          >
+                            {isTeam && pract && (
+                              <span className="font-semibold" style={{ color }}>
+                                {pract.first_name.charAt(0)}.{' '}
+                              </span>
+                            )}
+                            {s.clients
+                              ? `${s.clients.first_name} ${s.clients.last_name.charAt(0)}.`
+                              : 'Session'}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -226,13 +312,15 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
             {/* Day columns */}
             {days.map(({ dateStr }) => {
               const timed = (sessionsByDate.get(dateStr) ?? []).filter(s => !!s.start_time)
+              const blocked = blockedByDate.get(dateStr) ?? []
+
               return (
                 <div
                   key={dateStr}
                   className="relative border-l border-gray-100"
                   style={{ height: TOTAL_PX }}
                 >
-                  {/* Clickable hour cells (background layer) */}
+                  {/* Clickable hour cells */}
                   {HOURS.map(h => (
                     <div
                       key={h}
@@ -242,7 +330,55 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
                     />
                   ))}
 
-                  {/* Session blocks (foreground layer) */}
+                  {/* Blocked time blocks (behind sessions, z-index 5) */}
+                  {blocked.map((b) => {
+                    const startStr = b.start_time.slice(11, 16) // HH:MM
+                    const endStr = b.end_time.slice(11, 16)
+                    const startMins = timeToMins(startStr)
+                    const endMins = timeToMins(endStr)
+
+                    // Clamp to visible window
+                    const clampedStart = Math.max(startMins, HOUR_START * 60)
+                    const clampedEnd = Math.min(endMins, HOUR_END * 60)
+                    if (clampedEnd <= clampedStart) return null
+
+                    const topPx = (clampedStart - HOUR_START * 60) * (HOUR_PX / 60)
+                    const heightPx = Math.max((clampedEnd - clampedStart) * (HOUR_PX / 60), 16)
+
+                    const pract = practitionerMap.get(b.practitioner_id)
+                    const color = pract?.calendar_color || '#9ca3af'
+
+                    return (
+                      <div
+                        key={b.id}
+                        title={b.reason ? `Blocked: ${b.reason}` : 'Blocked'}
+                        style={{
+                          top: topPx,
+                          height: heightPx,
+                          left: 0,
+                          right: 0,
+                          background: `repeating-linear-gradient(
+                            135deg,
+                            rgba(${hexToRgb(color)}/0.08),
+                            rgba(${hexToRgb(color)}/0.08) 4px,
+                            rgba(${hexToRgb(color)}/0.18) 4px,
+                            rgba(${hexToRgb(color)}/0.18) 8px
+                          )`,
+                          borderLeft: `3px solid rgba(${hexToRgb(color)}/0.5)`,
+                        }}
+                        className="absolute z-5 overflow-hidden px-1.5 py-0.5 pointer-events-none"
+                      >
+                        {heightPx >= 20 && (
+                          <p className="truncate text-[10px] font-medium leading-tight" style={{ color }}>
+                            {b.reason || 'Blocked'}
+                            {isTeam && pract ? ` · ${pract.first_name}` : ''}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+
+                  {/* Session blocks (foreground, z-index 10) */}
                   {timed.map(s => {
                     const startMins = timeToMins(s.start_time!)
                     if (startMins < HOUR_START * 60 || startMins >= HOUR_END * 60) return null
@@ -251,6 +387,49 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
                     const clientName = s.clients
                       ? `${s.clients.first_name} ${s.clients.last_name}`
                       : 'Session'
+                    const pract = practitionerMap.get(s.practitioner_id)
+                    const color = pract?.calendar_color || '#6366f1'
+
+                    if (isTeam) {
+                      // Team view: colour by practitioner, indicate status via opacity
+                      const isCompleted = s.status === 'completed'
+                      const isCancelled = s.status === 'cancelled'
+                      const canEdit = isAdmin || s.practitioner_id === currentPractitionerId
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={canEdit ? (e) => openSession(s, e) : undefined}
+                          style={{
+                            top: topPx,
+                            height: heightPx,
+                            left: 2,
+                            right: 2,
+                            backgroundColor: `rgba(${hexToRgb(color)}/${isCancelled ? '0.15' : isCompleted ? '0.25' : '0.2'})`,
+                            borderColor: `rgba(${hexToRgb(color)}/${isCancelled ? '0.3' : '0.6'})`,
+                            borderLeftColor: color,
+                            borderLeftWidth: 3,
+                          }}
+                          className={`absolute z-10 overflow-hidden rounded border px-1.5 py-0.5 text-xs
+                            ${canEdit ? 'cursor-pointer hover:brightness-95' : 'cursor-default'}
+                            ${isCancelled ? 'line-through opacity-50' : ''}`}
+                        >
+                          <div className="truncate font-medium leading-tight" style={{ color: isCancelled ? '#9ca3af' : color }}>
+                            {pract && (
+                              <span className="opacity-70">{pract.first_name.charAt(0)}. </span>
+                            )}
+                            {clientName}
+                          </div>
+                          {heightPx >= 36 && (
+                            <div className="truncate leading-tight opacity-60" style={{ color }}>
+                              {s.start_time!.slice(0, 5)}
+                              {s.ndis_line_item ? ` · ${s.ndis_line_item}` : ''}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    }
+
+                    // Solo view: existing status-based colours
                     return (
                       <div
                         key={s.id}
@@ -277,11 +456,38 @@ export default function CalendarClient({ sessions, clients, services, priceGuide
         </div>
       </div>
 
+      {/* Legend for team view */}
+      {isTeam && filterPractitionerId === 'all' && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+          <span className="font-medium text-gray-600">Legend:</span>
+          {practitioners.map((p) => {
+            const color = p.calendar_color || '#6366f1'
+            return (
+              <span key={p.id} className="flex items-center gap-1">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-sm"
+                  style={{ backgroundColor: color }}
+                />
+                {p.first_name} {p.last_name}
+              </span>
+            )
+          })}
+          <span className="flex items-center gap-1 ml-2">
+            <span className="inline-block h-2.5 w-4 rounded-sm"
+              style={{ background: 'repeating-linear-gradient(135deg, #e5e7eb, #e5e7eb 2px, #d1d5db 2px, #d1d5db 5px)' }}
+            />
+            Blocked
+          </span>
+        </div>
+      )}
+
       {showModal && (
         <SessionModal
           clients={clients}
           services={services}
           priceGuide={priceGuide}
+          practitioners={isAdmin ? practitioners : []}
+          defaultPractitionerId={defaultPractitionerId}
           session={editSession}
           defaultDate={slotDate}
           defaultStartTime={slotTime}

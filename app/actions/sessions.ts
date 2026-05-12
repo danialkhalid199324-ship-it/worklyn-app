@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase-server'
 import { requireAuth } from '@/lib/auth'
 import { getPractitionerByUserId, getPractitionerById, getClientById } from '@/lib/db'
 import { resolveInvoiceRecipient } from '@/lib/invoice-routing'
@@ -70,6 +70,36 @@ async function checkConflict(
   const { count, error } = await query
   if (error) return null // don't block on query failure
   return count && count > 0 ? 'This time conflicts with another session.' : null
+}
+
+/**
+ * Returns an error string if the practitioner has a blocked time that overlaps
+ * [startTime, endTime] on serviceDate.  Uses the admin client so it works when
+ * an admin is booking on behalf of a team member (different practitioner_id).
+ */
+async function checkBlockedTime(
+  practitionerId: string,
+  serviceDate: string,
+  startTime: string,
+  endTime: string,
+): Promise<string | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adminClient: any = createAdminClient()
+    const { data, error } = await adminClient
+      .from('blocked_times')
+      .select('id')
+      .eq('practitioner_id', practitionerId)
+      .lt('start_time', `${serviceDate}T${endTime}:00`)
+      .gt('end_time', `${serviceDate}T${startTime}:00`)
+      .limit(1)
+    if (error) return null // don't block on query failure
+    return data && data.length > 0
+      ? 'This practitioner is unavailable during this time.'
+      : null
+  } catch {
+    return null // non-critical — don't block session creation on unexpected errors
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +369,11 @@ export async function createSession(formData: FormData) {
       supabase, sessionPractitioner.id, serviceDate, startTime, endTime,
     )
     if (conflict) return { error: conflict }
+
+    const blockedConflict = await checkBlockedTime(
+      sessionPractitioner.id, serviceDate, startTime, endTime,
+    )
+    if (blockedConflict) return { error: blockedConflict }
   }
 
   const sessionStatus = ((formData.get('status') as string) || 'scheduled') as SessionStatus
@@ -462,6 +497,11 @@ export async function updateSession(sessionId: string, formData: FormData) {
       supabase, practitioner.id, serviceDate, startTime, endTime, sessionId,
     )
     if (conflict) return { error: conflict }
+
+    const blockedConflict = await checkBlockedTime(
+      practitioner.id, serviceDate, startTime, endTime,
+    )
+    if (blockedConflict) return { error: blockedConflict }
   }
 
   const newStatus = formData.get('status') as SessionStatus

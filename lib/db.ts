@@ -15,6 +15,7 @@ import type {
   FundingAllocationRow,
   ClinicMembershipRow,
   ClientDocumentRow,
+  BlockedTimeRow,
 } from '@/types/database'
 
 export type ClinicMemberWithProfile = ClinicMembershipRow & {
@@ -583,4 +584,21 @@ export async function getClientDocuments(
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []) as unknown as ClientDocumentWithUploader[]
+}
+
+export async function getBlockedTimesForDateRange(
+  practitionerId: string,
+  from: string,
+  to: string,
+): Promise<BlockedTimeRow[]> {
+  const supabase = await createServerSupabaseClient()
+  const { data, error } = await supabase
+    .from('blocked_times')
+    .select('*')
+    .eq('practitioner_id', practitionerId)
+    .gte('start_time', `${from}T00:00:00`)
+    .lte('start_time', `${to}T23:59:59`)
+    .order('start_time')
+  if (error) throw error
+  return (data ?? []) as unknown as BlockedTimeRow[]
 }
