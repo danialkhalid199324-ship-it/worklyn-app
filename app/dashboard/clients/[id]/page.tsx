@@ -8,6 +8,7 @@ import {
   getClientInvoices,
   getClientSessionNotes,
   getClientFundingAllocations,
+  getClientDocuments,
 } from '@/lib/db'
 import ClientDetailTabs from './ClientDetailTabs'
 
@@ -30,11 +31,12 @@ export default async function ClientDetailPage({ params }: Props) {
     notFound()
   }
 
-  const [events, invoices, sessionNotes, allocations] = await Promise.all([
+  const [events, invoices, sessionNotes, allocations, documents] = await Promise.all([
     getClientEvents(practitioner.id, params.id),
     getClientInvoices(practitioner.id, params.id),
     getClientSessionNotes(practitioner.id, params.id),
     getClientFundingAllocations(practitioner.id, params.id).catch(() => []),
+    getClientDocuments(practitioner.id, params.id).catch(() => []),
   ])
 
   return (
@@ -44,6 +46,8 @@ export default async function ClientDetailPage({ params }: Props) {
       invoices={invoices}
       sessionNotes={sessionNotes}
       allocations={allocations}
+      documents={documents}
+      practitionerRole={practitioner.role}
     />
   )
 }

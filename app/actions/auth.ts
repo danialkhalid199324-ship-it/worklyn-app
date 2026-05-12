@@ -127,7 +127,7 @@ export async function requestPasswordReset(formData: FormData) {
   }
 
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')
-  const redirectTo = `${appUrl}/auth/confirm?next=/auth/reset-password`
+  const redirectTo = `${appUrl}/auth/reset-password`
 
   console.log('[requestPasswordReset] email:', email, '| redirectTo:', redirectTo)
 

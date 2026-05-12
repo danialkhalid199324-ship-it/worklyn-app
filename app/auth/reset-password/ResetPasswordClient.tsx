@@ -19,19 +19,41 @@ export default function ResetPasswordClient({ error }: { error?: string }) {
   useEffect(() => {
     const supabase = createClient()
 
-    // Check for an existing recovery session (set by /auth/confirm)
-    supabase.auth.getSession().then(({ data, error: sessionError }) => {
-      if (sessionError) {
-        console.error('[ResetPasswordClient] getSession error:', sessionError.message)
+    // 1. PKCE flow — Supabase appends ?code= to the redirect URL
+    const searchParams = new URLSearchParams(window.location.search)
+    const code = searchParams.get('code')
+    if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ error: err }) => {
+        setStatus(err ? 'expired' : 'ready')
+      })
+      return
+    }
+
+    // 2. Implicit flow — Supabase appends #access_token=...&type=recovery
+    //    Hash fragments are never sent to the server, so we handle them here.
+    if (window.location.hash) {
+      const hashParams = new URLSearchParams(window.location.hash.slice(1))
+      const accessToken = hashParams.get('access_token')
+      const refreshToken = hashParams.get('refresh_token')
+      const type = hashParams.get('type')
+      if (accessToken && refreshToken && type === 'recovery') {
+        supabase.auth
+          .setSession({ access_token: accessToken, refresh_token: refreshToken })
+          .then(({ error: err }) => {
+            setStatus(err ? 'expired' : 'ready')
+          })
+        return
       }
-      console.log('[ResetPasswordClient] session:', data.session?.user?.id ?? 'none')
-      setStatus(data.session ? 'ready' : 'expired')
+    }
+
+    // 3. Existing session — arrived via server-side /auth/confirm route (PKCE
+    //    exchange done there, session already in cookies).
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') setStatus('ready')
     })
 
-    // Also listen for PASSWORD_RECOVERY event (implicit-flow fallback)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      console.log('[ResetPasswordClient] auth event:', event)
-      if (event === 'PASSWORD_RECOVERY') setStatus('ready')
+    supabase.auth.getSession().then(({ data }) => {
+      setStatus(data.session ? 'ready' : 'expired')
     })
 
     return () => subscription.unsubscribe()

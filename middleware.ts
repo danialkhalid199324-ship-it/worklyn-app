@@ -59,6 +59,12 @@ export async function middleware(request: NextRequest) {
         // Already on the MFA page — allow
         return response
       }
+      // Recovery sessions must reach /auth/reset-password before MFA can be enforced.
+      // The reset page verifies the recovery token; after password update the user
+      // is sent to /auth/login and must complete MFA on their next normal sign-in.
+      if (pathname === '/auth/reset-password') {
+        return response
+      }
       const mfaUrl = new URL('/auth/mfa', request.url)
       // Preserve the original destination so we can redirect back after MFA,
       // but only for non-auth routes (avoids /auth/* redirect loops).

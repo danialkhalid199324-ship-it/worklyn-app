@@ -10,9 +10,10 @@ import ClientModal from '../ClientModal'
 import { updateClient, toggleClientStatus } from '@/app/actions/clients'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import { resolveInvoiceRecipient, recipientLabel } from '@/lib/invoice-routing'
-import type { ClientRow, InvoiceRow, FundingAllocationRow } from '@/types/database'
-import type { ClientEventRow, ClientSessionNote } from '@/lib/db'
+import type { ClientRow, InvoiceRow, FundingAllocationRow, ClinicRole } from '@/types/database'
+import type { ClientEventRow, ClientSessionNote, ClientDocumentWithUploader } from '@/lib/db'
 import FundingTab from './FundingTab'
+import DocumentsTab from './DocumentsTab'
 import { parseNDISNotes } from '@/app/dashboard/sessions/NDISNotesFields'
 import type { NDISNotes } from '@/app/dashboard/sessions/NDISNotesFields'
 import { parseTherapyNotes } from '@/app/dashboard/sessions/TherapyNotesFields'
@@ -26,9 +27,11 @@ interface Props {
   invoices: InvoiceRow[]
   sessionNotes: ClientSessionNote[]
   allocations: FundingAllocationRow[]
+  documents: ClientDocumentWithUploader[]
+  practitionerRole: ClinicRole
 }
 
-type Tab = 'profile' | 'funding' | 'appointments' | 'reports' | 'invoices'
+type Tab = 'profile' | 'funding' | 'appointments' | 'reports' | 'invoices' | 'documents'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'profile', label: 'Profile' },
@@ -36,6 +39,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'appointments', label: 'Appointments' },
   { id: 'reports', label: 'Session Notes' },
   { id: 'invoices', label: 'Invoices' },
+  { id: 'documents', label: 'Documents' },
 ]
 
 const STATUS_COLORS: Record<string, 'gray' | 'green' | 'amber' | 'red' | 'blue' | 'purple'> = {
@@ -60,6 +64,8 @@ export default function ClientDetailTabs({
   invoices,
   sessionNotes,
   allocations,
+  documents,
+  practitionerRole,
 }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('profile')
   const [showEditModal, setShowEditModal] = useState(false)
@@ -157,6 +163,11 @@ export default function ClientDetailTabs({
                   {sessionNotes.length}
                 </span>
               )}
+              {tab.id === 'documents' && documents.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
+                  {documents.length}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -168,6 +179,13 @@ export default function ClientDetailTabs({
       {activeTab === 'appointments' && <AppointmentsTab events={events} />}
       {activeTab === 'reports' && <ReportsTab notes={sessionNotes} />}
       {activeTab === 'invoices' && <InvoicesTab invoices={invoices} client={client} />}
+      {activeTab === 'documents' && (
+        <DocumentsTab
+          clientId={client.id}
+          documents={documents}
+          practitionerRole={practitionerRole}
+        />
+      )}
 
       {showEditModal && (
         <ClientModal

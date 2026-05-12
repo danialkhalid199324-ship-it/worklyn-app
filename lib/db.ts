@@ -13,6 +13,7 @@ import type {
   NdisPriceGuideRow,
   FundingAllocationRow,
   ClinicMembershipRow,
+  ClientDocumentRow,
 } from '@/types/database'
 
 export type ClinicMemberWithProfile = ClinicMembershipRow & {
@@ -563,4 +564,22 @@ export async function getClinicMembers(clinicId: string): Promise<ClinicMemberWi
     .order('created_at')
   if (error) throw error
   return (data ?? []) as unknown as ClinicMemberWithProfile[]
+}
+
+export type ClientDocumentWithUploader = ClientDocumentRow & {
+  uploader: { first_name: string; last_name: string } | null
+}
+
+export async function getClientDocuments(
+  practitionerId: string,
+  clientId: string,
+): Promise<ClientDocumentWithUploader[]> {
+  const supabase = await createServerSupabaseClient()
+  const { data, error } = await supabase
+    .from('client_documents')
+    .select('*, uploader:practitioners(first_name, last_name)')
+    .eq('client_id', clientId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as unknown as ClientDocumentWithUploader[]
 }

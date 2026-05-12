@@ -311,6 +311,24 @@ export interface OrgSettingsRow {
 }
 
 // ---------------------------------------------------------------------------
+// Client documents
+// ---------------------------------------------------------------------------
+
+export interface ClientDocumentRow {
+  id: string
+  practitioner_id: string
+  client_id: string
+  file_name: string
+  file_path: string
+  file_type: string
+  file_size: number
+  document_category: string
+  uploaded_by: string
+  created_at: string
+  updated_at: string
+}
+
+// ---------------------------------------------------------------------------
 // Funding allocation
 // ---------------------------------------------------------------------------
 
