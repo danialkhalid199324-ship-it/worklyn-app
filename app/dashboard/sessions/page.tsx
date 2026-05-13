@@ -6,8 +6,18 @@ import type { PractitionerRow } from '@/types/database'
 
 export const metadata: Metadata = { title: 'Sessions' }
 
-export default async function SessionsPage() {
+type SessionFilter = 'all' | 'scheduled' | 'completed' | 'unbilled'
+const VALID_SESSION_FILTERS: SessionFilter[] = ['all', 'scheduled', 'completed', 'unbilled']
+
+export default async function SessionsPage({
+  searchParams,
+}: {
+  searchParams: { filter?: string }
+}) {
   const { practitioner } = await requireAuthWithPractitioner()
+  const defaultFilter: SessionFilter = VALID_SESSION_FILTERS.includes(searchParams.filter as SessionFilter)
+    ? (searchParams.filter as SessionFilter)
+    : 'all'
 
   const [sessions, clients, services, clinicMembers] = await Promise.all([
     getSessions(practitioner.id, 200),
@@ -43,6 +53,7 @@ export default async function SessionsPage() {
       practitioners={practitioners}
       defaultPractitionerId={practitioner.id}
       practitionerName={practitionerName}
+      defaultFilter={defaultFilter}
     />
   )
 }

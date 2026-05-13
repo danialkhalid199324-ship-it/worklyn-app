@@ -7,8 +7,18 @@ import InvoicesClient from './InvoicesClient'
 
 export const metadata: Metadata = { title: 'Invoices' }
 
-export default async function InvoicesPage() {
+type InvoiceFilterStatus = 'all' | 'draft' | 'sent' | 'overdue' | 'paid' | 'cancelled'
+const VALID_INVOICE_FILTERS: InvoiceFilterStatus[] = ['all', 'draft', 'sent', 'overdue', 'paid', 'cancelled']
+
+export default async function InvoicesPage({
+  searchParams,
+}: {
+  searchParams: { filter?: string }
+}) {
   const { practitioner } = await requireAuthWithPractitioner()
+  const defaultFilter: InvoiceFilterStatus = VALID_INVOICE_FILTERS.includes(searchParams.filter as InvoiceFilterStatus)
+    ? (searchParams.filter as InvoiceFilterStatus)
+    : 'all'
 
   // Auto-mark overdue: flip sent invoices whose due_at has passed.
   // Runs on every page load — safe, targeted, no side-effects on other fields.
@@ -72,6 +82,7 @@ export default async function InvoicesPage() {
       clients={clients}
       nextInvoiceNumber={nextInvoiceNumber}
       orgSettings={orgSettings}
+      defaultFilter={defaultFilter}
       stats={{
         outstandingCents,
         outstandingCount,

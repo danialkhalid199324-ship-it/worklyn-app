@@ -20,6 +20,7 @@ interface Props {
   practitioners: PractitionerRow[]
   defaultPractitionerId: string
   practitionerName: string
+  defaultFilter?: Filter
 }
 
 const STATUS_COLOR = {
@@ -34,9 +35,9 @@ function sessionAmount(s: SessionWithClient) {
   return Math.round((s.duration_minutes / 60) * s.rate * 100)
 }
 
-export default function SessionsClient({ sessions, clients, services, priceGuide, practitioners, defaultPractitionerId, practitionerName }: Props) {
+export default function SessionsClient({ sessions, clients, services, priceGuide, practitioners, defaultPractitionerId, practitionerName, defaultFilter }: Props) {
   const router = useRouter()
-  const [filter, setFilter] = useState<Filter>('all')
+  const [filter, setFilter] = useState<Filter>(defaultFilter ?? 'all')
   const [showNew, setShowNew] = useState(false)
   const [showGenerate, setShowGenerate] = useState(false)
   const [editSession, setEditSession] = useState<SessionWithClient | null>(null)

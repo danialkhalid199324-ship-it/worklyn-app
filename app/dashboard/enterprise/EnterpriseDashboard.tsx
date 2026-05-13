@@ -75,9 +75,9 @@ function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title
   )
 }
 
-function Card({ children, className }: { children: React.ReactNode; className?: string }) {
+function Card({ children, className, id }: { children: React.ReactNode; className?: string; id?: string }) {
   return (
-    <div className={cn('rounded-xl border border-gray-100 bg-white shadow-sm', className)}>
+    <div id={id} className={cn('rounded-xl border border-gray-100 bg-white shadow-sm', className)}>
       {children}
     </div>
   )
@@ -118,14 +118,17 @@ type KpiCardProps = {
   icon: React.ReactNode
   active?: boolean
   activeBorder?: string
+  href?: string
 }
 
-function KpiCard({ label, value, sub, iconBg, iconColor, icon, active, activeBorder }: KpiCardProps) {
-  return (
-    <div className={cn(
-      'rounded-xl border bg-white p-4 shadow-sm',
-      active && activeBorder ? activeBorder : 'border-gray-100',
-    )}>
+function KpiCard({ label, value, sub, iconBg, iconColor, icon, active, activeBorder, href }: KpiCardProps) {
+  const cls = cn(
+    'rounded-xl border bg-white p-4 shadow-sm transition-all duration-150',
+    active && activeBorder ? activeBorder : 'border-gray-100',
+    href && 'cursor-pointer hover:shadow-md hover:border-gray-200',
+  )
+  const inner = (
+    <>
       <div className={cn('mb-3 flex h-8 w-8 items-center justify-center rounded-lg', iconBg)}>
         <span className={iconColor}>{icon}</span>
       </div>
@@ -134,8 +137,13 @@ function KpiCard({ label, value, sub, iconBg, iconColor, icon, active, activeBor
       </p>
       <p className="mt-1 text-[11px] font-medium text-gray-500 leading-tight">{label}</p>
       {sub && <p className={cn('mt-0.5 text-[10px] font-medium', active ? 'text-gray-500' : 'text-gray-300')}>{sub}</p>}
-    </div>
+      {href && <p className="mt-2 text-[10px] font-semibold text-gray-300 group-hover:text-gray-400">View →</p>}
+    </>
   )
+  if (href) {
+    return <a href={href} className={cn(cls, 'group block')}>{inner}</a>
+  }
+  return <div className={cls}>{inner}</div>
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +309,7 @@ export default function EnterpriseDashboard({
             icon={<svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>}
             iconBg="bg-amber-50" iconColor="text-amber-600"
             active={kpis.outstandingCents > 0} activeBorder="border-amber-100"
+            href="/dashboard/invoices?filter=sent"
           />
           <KpiCard
             label="Overdue invoices"
@@ -309,6 +318,7 @@ export default function EnterpriseDashboard({
             icon={<svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>}
             iconBg="bg-red-50" iconColor="text-red-500"
             active={kpis.overdueCount > 0} activeBorder="border-red-100"
+            href="/dashboard/invoices?filter=overdue"
           />
           <KpiCard
             label="Compliance items"
@@ -317,6 +327,7 @@ export default function EnterpriseDashboard({
             icon={<svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>}
             iconBg="bg-violet-50" iconColor="text-violet-600"
             active={kpis.complianceOpenItems > 0} activeBorder="border-violet-100"
+            href="#compliance-section"
           />
           <KpiCard
             label="Sessions completed"
@@ -325,6 +336,7 @@ export default function EnterpriseDashboard({
             icon={<svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>}
             iconBg="bg-sky-50" iconColor="text-sky-600"
             active={kpis.completedSessions > 0} activeBorder="border-sky-100"
+            href="/dashboard/sessions?filter=completed"
           />
           <KpiCard
             label="Remittance pending"
@@ -333,6 +345,7 @@ export default function EnterpriseDashboard({
             icon={<svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>}
             iconBg="bg-blue-50" iconColor="text-blue-600"
             active={kpis.remittancePending > 0} activeBorder="border-blue-100"
+            href="/dashboard/invoices?filter=paid"
           />
         </div>
       </div>
@@ -468,7 +481,7 @@ export default function EnterpriseDashboard({
         </Card>
 
         {/* Compliance & Audit Centre */}
-        <Card>
+        <Card id="compliance-section">
           <CardHeader>
             <div className="flex items-center gap-2.5">
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-50">
@@ -498,21 +511,21 @@ export default function EnterpriseDashboard({
                   label="Missing case notes"
                   count={compliance.missingNotes}
                   sub={compliance.missingNotes > 0 ? 'Completed sessions without notes' : 'All notes complete'}
-                  href="/dashboard/sessions"
+                  href="/dashboard/sessions?filter=completed"
                   dotColor="bg-amber-400"
                 />
                 <ComplianceRow
                   label="Sessions not invoiced"
                   count={compliance.uninvoicedSessions}
                   sub={compliance.uninvoicedSessions > 0 ? 'Completed but no invoice created' : 'All invoiced'}
-                  href="/dashboard/sessions"
+                  href="/dashboard/sessions?filter=unbilled"
                   dotColor="bg-amber-400"
                 />
                 <ComplianceRow
                   label="Missing payment references"
                   count={compliance.missingPaymentRef}
                   sub={compliance.missingPaymentRef > 0 ? 'Paid invoices without reference' : 'All references recorded'}
-                  href="/dashboard/invoices"
+                  href="/dashboard/invoices?filter=paid"
                   dotColor="bg-blue-400"
                 />
                 <ComplianceRow
@@ -526,14 +539,14 @@ export default function EnterpriseDashboard({
                   label="Remittance pending"
                   count={compliance.remittancePending}
                   sub={compliance.remittancePending > 0 ? 'Paid invoices awaiting remittance' : 'All remittances recorded'}
-                  href="/dashboard/invoices"
+                  href="/dashboard/invoices?filter=paid"
                   dotColor="bg-blue-400"
                 />
                 <ComplianceRow
                   label="Overdue invoices"
                   count={compliance.overdueInvoices}
                   sub={compliance.overdueInvoices > 0 ? 'Past due date and unpaid' : 'No overdue invoices'}
-                  href="/dashboard/invoices"
+                  href="/dashboard/invoices?filter=overdue"
                   dotColor="bg-red-500"
                 />
               </div>
@@ -777,30 +790,35 @@ export default function EnterpriseDashboard({
             value={kpis.revenueInPeriodCents > 0 ? fmtAUD(kpis.revenueInPeriodCents) : 'No revenue'}
             detail={kpis.revenueInPeriodCents > 0 ? 'Paid invoices in range' : 'No paid invoices yet'}
             color={kpis.revenueInPeriodCents > 0 ? 'emerald' : 'gray'}
+            href="/dashboard/reports"
           />
           <InsightCard
             title="Overdue risk"
             value={kpis.overdueCents > 0 ? fmtAUD(kpis.overdueCents) : 'None'}
             detail={kpis.overdueCount > 0 ? `${kpis.overdueCount} invoice${kpis.overdueCount !== 1 ? 's' : ''} overdue` : 'No overdue invoices'}
             color={kpis.overdueCount > 0 ? 'red' : 'gray'}
+            href="/dashboard/invoices?filter=overdue"
           />
           <InsightCard
             title="Completion rate"
             value={performance.completed + performance.cancelled > 0 ? `${performance.completionRate}%` : '—'}
             detail={`${performance.completed} completed · ${performance.cancelled} cancelled`}
             color={performance.completionRate >= 90 ? 'emerald' : performance.completionRate >= 70 ? 'amber' : 'red'}
+            href="/dashboard/sessions?filter=completed"
           />
           <InsightCard
             title="Missing documents"
             value={String(compliance.clientsWithoutDocs)}
             detail={compliance.clientsWithoutDocs > 0 ? 'Active clients without files' : 'All clients documented'}
             color={compliance.clientsWithoutDocs > 0 ? 'amber' : 'gray'}
+            href="/dashboard/clients"
           />
           <InsightCard
             title="Remittance pipeline"
             value={String(kpis.remittancePending)}
             detail={kpis.remittancePending > 0 ? 'Paid invoices awaiting confirmation' : 'All remittances cleared'}
             color={kpis.remittancePending > 0 ? 'blue' : 'gray'}
+            href="/dashboard/invoices?filter=paid"
           />
         </div>
       </div>
@@ -824,16 +842,26 @@ const INSIGHT_COLORS: Record<InsightColor, { value: string; bg: string; border: 
 }
 
 function InsightCard({
-  title, value, detail, color,
+  title, value, detail, color, href,
 }: {
-  title: string; value: string; detail: string; color: InsightColor
+  title: string; value: string; detail: string; color: InsightColor; href?: string
 }) {
   const cfg = INSIGHT_COLORS[color]
-  return (
-    <div className={cn('rounded-xl border p-4 shadow-sm', cfg.bg, cfg.border)}>
+  const cls = cn(
+    'rounded-xl border p-4 shadow-sm transition-all duration-150',
+    cfg.bg, cfg.border,
+    href && 'cursor-pointer hover:shadow-md',
+  )
+  const inner = (
+    <>
       <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500">{title}</p>
       <p className={cn('mt-1 text-lg font-bold tabular-nums leading-none', cfg.value)}>{value}</p>
       <p className="mt-1.5 text-[10px] text-gray-500 leading-tight">{detail}</p>
-    </div>
+      {href && <p className="mt-2 text-[10px] font-semibold text-gray-300">View →</p>}
+    </>
   )
+  if (href) {
+    return <a href={href} className={cls}>{inner}</a>
+  }
+  return <div className={cls}>{inner}</div>
 }

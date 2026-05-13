@@ -34,6 +34,7 @@ interface Props {
   nextInvoiceNumber: string
   orgSettings: OrgSettingsRow | null
   stats: SummaryStats
+  defaultFilter?: FilterStatus
 }
 
 const STATUS_COLOR: Record<InvoiceStatus, 'gray' | 'blue' | 'green' | 'amber' | 'red'> = {
@@ -62,10 +63,10 @@ function daysOverdue(dueAt: string | null): number | null {
   return days > 0 ? days : null
 }
 
-export default function InvoicesClient({ invoices, clients, nextInvoiceNumber, orgSettings, stats }: Props) {
+export default function InvoicesClient({ invoices, clients, nextInvoiceNumber, orgSettings, stats, defaultFilter }: Props) {
   const [showModal, setShowModal] = useState(false)
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<FilterStatus>('all')
+  const [statusFilter, setStatusFilter] = useState<FilterStatus>(defaultFilter ?? 'all')
   const [confirmDelete, setConfirmDelete] = useState<InvoiceWithClient | null>(null)
   const [deletePending, startDeleteTransition] = useTransition()
   const router = useRouter()
