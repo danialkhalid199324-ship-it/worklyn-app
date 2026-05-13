@@ -5,7 +5,7 @@ import type { InvoiceRow, ClientRow } from '@/types/database'
 // Period
 // ---------------------------------------------------------------------------
 
-export type Period = 'this_month' | 'last_month' | 'last_3_months' | 'this_year'
+export type Period = 'today' | 'this_week' | 'this_month' | 'last_month' | 'last_3_months' | 'this_year'
 
 export function getPeriodDates(period: Period): { from: string; to: string; label: string } {
   const now = new Date()
@@ -14,6 +14,19 @@ export function getPeriodDates(period: Period): { from: string; to: string; labe
   const p = (n: number) => String(n).padStart(2, '0')
 
   switch (period) {
+    case 'today': {
+      const d = `${y}-${p(m + 1)}-${p(now.getDate())}`
+      return { from: d, to: d, label: 'Today' }
+    }
+    case 'this_week': {
+      const day = now.getDay() // 0=Sun
+      const diff = day === 0 ? -6 : 1 - day // back to Monday
+      const weekStart = new Date(now)
+      weekStart.setDate(now.getDate() + diff)
+      const from = `${weekStart.getFullYear()}-${p(weekStart.getMonth() + 1)}-${p(weekStart.getDate())}`
+      const to   = `${y}-${p(m + 1)}-${p(now.getDate())}`
+      return { from, to, label: 'This week' }
+    }
     case 'this_month': {
       const from = `${y}-${p(m + 1)}-01`
       const to = `${y}-${p(m + 1)}-${p(new Date(y, m + 1, 0).getDate())}`

@@ -1,11 +1,11 @@
 import type { Metadata } from 'next'
 import { requireAuthWithPractitioner } from '@/lib/auth'
-import { getCommandCentreData, type Period } from '@/lib/reports'
+import { getCommandCentreData, getReportData, type Period } from '@/lib/reports'
 import ReportsDashboard from './ReportsDashboard'
 
 export const metadata: Metadata = { title: 'Reports' }
 
-const VALID_PERIODS: Period[] = ['this_month', 'last_month', 'last_3_months', 'this_year']
+const VALID_PERIODS: Period[] = ['today', 'this_week', 'this_month', 'last_month', 'last_3_months', 'this_year']
 
 export default async function ReportsPage({
   searchParams,
@@ -18,7 +18,10 @@ export default async function ReportsPage({
     ? (searchParams.period as Period)
     : 'this_month'
 
-  const data = await getCommandCentreData(practitioner.id, period)
+  const [data, reportData] = await Promise.all([
+    getCommandCentreData(practitioner.id, period),
+    getReportData(practitioner.id, period),
+  ])
 
-  return <ReportsDashboard data={data} currentPeriod={period} />
+  return <ReportsDashboard data={data} reportData={reportData} currentPeriod={period} />
 }
