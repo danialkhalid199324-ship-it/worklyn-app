@@ -3,6 +3,12 @@ import { createServerClient } from '@supabase/ssr'
 
 const PUBLIC_EXACT = new Set([
   '/',
+  '/features',
+  '/pricing',
+  '/about',
+  '/contact',
+  '/privacy',
+  '/terms',
   '/auth/login',
   '/auth/signup',
   '/auth/check-email',
