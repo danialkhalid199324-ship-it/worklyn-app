@@ -19,12 +19,6 @@ export default function Header() {
 
         <nav className="hidden items-center gap-1 md:flex">
           <Link
-            href="/features"
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
-          >
-            Features
-          </Link>
-          <Link
             href="/pricing"
             className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
           >

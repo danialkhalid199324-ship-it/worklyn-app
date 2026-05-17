@@ -72,10 +72,10 @@ export default function AboutPage() {
               </p>
               <div className="mt-8 flex gap-4">
                 <Link
-                  href="/features"
+                  href="/pricing"
                   className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-3 text-sm font-bold text-white hover:bg-brand-700 transition-colors"
                 >
-                  See all features →
+                  See pricing →
                 </Link>
               </div>
             </div>

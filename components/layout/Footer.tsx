@@ -24,7 +24,6 @@ export default function Footer() {
           <div>
             <p className="mb-4 text-xs font-bold uppercase tracking-widest text-gray-400">Product</p>
             <ul className="space-y-3">
-              <li><Link href="/features" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">Features</Link></li>
               <li><Link href="/pricing" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">Pricing</Link></li>
               <li><Link href="/auth/signup" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">Start free trial</Link></li>
               <li><Link href="/auth/login" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">Sign in</Link></li>
